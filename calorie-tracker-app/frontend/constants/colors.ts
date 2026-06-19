@@ -13,6 +13,7 @@ export const Colors = {
   slate400: "#94A3B8",
   slate100: "#F1F5F9",
   slate50: "#F8FAFC",   // results dashboard / light backdrop
+  backdrop: "#F9FAFB",  // global off-white screen background
   zinc: "#E4E4E7",      // border / divider
 
   white: "#FFFFFF",

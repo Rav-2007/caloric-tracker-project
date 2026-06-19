@@ -6,7 +6,7 @@
  *  2. Config & constants
  *  3. Domain types
  *  4. Pure helpers
- *  5. Atomic sub-components: ScanCorner, PermissionGate
+ *  5. Atomic sub-components: ThaliGuideRing, ScannerLine, PermissionGate
  *  6. Pipeline sub-components: LoadingOverlay, NetworkErrorCard
  *  7. Results sub-components: MacroBar, FoodItemCard, ResultsDashboard
  *  8. Main CameraScreen
@@ -17,7 +17,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Image,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -27,6 +29,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { CameraView, CameraType, useCameraPermissions } from "expo-camera";
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
+import Svg, { Circle } from "react-native-svg";
 import {
   AlertTriangle,
   BookmarkPlus,
@@ -34,7 +37,6 @@ import {
   Flame,
   FlipHorizontal,
   RefreshCw,
-  ScanLine,
   ShieldAlert,
   X,
   Zap,
@@ -44,19 +46,27 @@ import { useRouter } from "expo-router";
 import { Colors, alpha } from "@/constants/colors";
 
 // ─── 2. Config ───────────────────────────────────────────────────────────────
-// Set this to your development machine's LAN IP, e.g. "http://192.168.1.42:8000"
-// On Android emulator use "http://10.0.2.2:8000"; on iOS simulator use "http://localhost:8000"
 const API_URL = "http://10.82.194.56:8000";
-const NETWORK_TIMEOUT_MS = 70_000; // backend Gemini timeout is 60 s; allow 10 s headroom
+const NETWORK_TIMEOUT_MS = 70_000;
 
-const CORNER_SIZE = 30;
-const CORNER_W    = 3;
+// Guide ring geometry
+const GUIDE_DIAMETER   = 264;
+const GUIDE_RADIUS_SVG = 128;  // SVG circle r value
+const GUIDE_CENTER     = GUIDE_DIAMETER / 2;
+const GUIDE_STROKE     = 2.5;
+// Inner clipping area (scanner bar is clipped to this circle)
+const CLIP_DIAMETER    = GUIDE_DIAMETER - 14;
+const CLIP_RADIUS      = CLIP_DIAMETER / 2;
+
+// Monospaced font for clinical loading text
+const MONO = Platform.OS === "ios" ? "Courier New" : "monospace";
 
 const LOADING_MESSAGES = [
-  "Capturing plate details...",
-  "Passing to Gemini Flash...",
-  "Applying ICMR-NIN nutrition algorithms...",
-  "Structuring macros...",
+  "Consulting ICMR-NIN database...",
+  "Analyzing density & oil pools...",
+  "Mapping plate geometry...",
+  "Cross-referencing portion weights...",
+  "Computing macro profiles...",
 ] as const;
 
 // ─── 3. Domain Types ─────────────────────────────────────────────────────────
@@ -67,7 +77,6 @@ interface FoodItem {
   item_name: string;
   estimated_grams: number;
   visual_confidence: number;
-  // Macros resolved server-side via ICMR-NIN lookup or fallback formula
   calories: number;
   protein_g: number;
   carbs_g: number;
@@ -77,7 +86,6 @@ interface FoodItem {
 
 interface FoodAnalysisResult {
   food_items: FoodItem[];
-  // Pre-summed totals computed on the backend — no client-side estimation needed
   total_calories: number;
   total_protein_g: number;
   total_carbs_g: number;
@@ -100,25 +108,88 @@ function confidenceMeta(conf: number): { label: string; color: string } {
 
 // ─── 5. Atomic Sub-components ────────────────────────────────────────────────
 
-function ScanCorner({ top, left }: { top: boolean; left: boolean }) {
+/** Pulsing dashed emerald ring — framing guide for plate capture */
+function ThaliGuideRing({ pulseScale, pulseOpacity }: {
+  pulseScale: Animated.AnimatedInterpolation<number>;
+  pulseOpacity: Animated.AnimatedInterpolation<number>;
+}) {
   return (
-    <View
+    <Animated.View
       style={[
-        styles.corner,
-        top  ? { top: 0 }    : { bottom: 0 },
-        left ? { left: 0 }   : { right: 0 },
-        {
-          borderTopWidth:          top  ? CORNER_W : 0,
-          borderBottomWidth:       top  ? 0 : CORNER_W,
-          borderLeftWidth:         left ? CORNER_W : 0,
-          borderRightWidth:        left ? 0 : CORNER_W,
-          borderTopLeftRadius:     top  && left  ? 6 : 0,
-          borderTopRightRadius:    top  && !left ? 6 : 0,
-          borderBottomLeftRadius:  !top && left  ? 6 : 0,
-          borderBottomRightRadius: !top && !left ? 6 : 0,
-        },
+        styles.guideRingWrap,
+        { transform: [{ scale: pulseScale }], opacity: pulseOpacity },
       ]}
-    />
+      pointerEvents="none"
+    >
+      <Svg
+        width={GUIDE_DIAMETER}
+        height={GUIDE_DIAMETER}
+        viewBox={`0 0 ${GUIDE_DIAMETER} ${GUIDE_DIAMETER}`}
+      >
+        {/* Dim track */}
+        <Circle
+          cx={GUIDE_CENTER}
+          cy={GUIDE_CENTER}
+          r={GUIDE_RADIUS_SVG}
+          stroke="rgba(255,255,255,0.12)"
+          strokeWidth={GUIDE_STROKE}
+          fill="none"
+        />
+        {/* Dashed emerald guide */}
+        <Circle
+          cx={GUIDE_CENTER}
+          cy={GUIDE_CENTER}
+          r={GUIDE_RADIUS_SVG}
+          stroke="rgba(16,185,129,0.82)"
+          strokeWidth={GUIDE_STROKE}
+          fill="none"
+          strokeDasharray="14 9"
+          strokeLinecap="round"
+        />
+      </Svg>
+    </Animated.View>
+  );
+}
+
+/** Animated horizontal bar that sweeps top→bottom while isAnalyzing */
+function ScannerLine({ active }: { active: boolean }) {
+  const scanAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (!active) { scanAnim.setValue(0); return; }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(scanAnim, {
+          toValue: 1,
+          duration: 2_000,
+          useNativeDriver: true,
+        }),
+        Animated.timing(scanAnim, {
+          toValue: 0,
+          duration: 0,
+          useNativeDriver: true,
+        }),
+        Animated.delay(80),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [active, scanAnim]);
+
+  const translateY = scanAnim.interpolate({
+    inputRange:  [0, 1],
+    outputRange: [-CLIP_RADIUS, CLIP_RADIUS],
+  });
+
+  if (!active) return null;
+
+  return (
+    // Clipping container — scanner bar is invisible outside the ring
+    <View style={styles.scannerClip} pointerEvents="none">
+      <Animated.View
+        style={[styles.scannerBar, { transform: [{ translateY }] }]}
+      />
+    </View>
   );
 }
 
@@ -146,31 +217,48 @@ function PermissionGate({ onRequest }: { onRequest: () => void }) {
 
 function LoadingOverlay({ msgIndex }: { msgIndex: number }) {
   const activeIdx = msgIndex % LOADING_MESSAGES.length;
+
+  // Fade the text on each message change
+  const fadeAnim = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    fadeAnim.setValue(0);
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 420,
+      useNativeDriver: true,
+    }).start();
+  }, [activeIdx, fadeAnim]);
+
   return (
     <View style={styles.loadingRoot}>
       <View style={styles.loadingCard}>
         {/* Glowing indicator ring */}
         <View style={styles.glowRing}>
-          <ActivityIndicator size="large" color={Colors.emerald} />
+          <ActivityIndicator size="large" color={Colors.mint} />
         </View>
 
-        <Text style={styles.loadingMsg}>{LOADING_MESSAGES[activeIdx]}</Text>
+        {/* Status label */}
+        <Text style={styles.loadingStatus}>GEMINI VISION · ACTIVE</Text>
 
-        {/* Step dots */}
+        {/* Monospaced cycling message */}
+        <Animated.Text style={[styles.loadingMsg, { opacity: fadeAnim }]}>
+          {LOADING_MESSAGES[activeIdx]}
+        </Animated.Text>
+
+        {/* Progress dots */}
         <View style={styles.dotsRow}>
           {LOADING_MESSAGES.map((_, i) => (
             <View
               key={i}
               style={[
                 styles.dot,
-                i === activeIdx
-                  ? styles.dotActive
-                  : { backgroundColor: alpha(Colors.emerald, 60) },
+                i === activeIdx ? styles.dotActive : styles.dotInactive,
               ]}
             />
           ))}
         </View>
 
+        {/* Powered-by footer */}
         <View style={styles.poweredByRow}>
           <Zap size={11} color={Colors.teal} />
           <Text style={styles.poweredByText}>Gemini 2.5 Flash Vision</Text>
@@ -205,12 +293,11 @@ function NetworkErrorCard({
 interface MacroBarProps {
   label: string;
   grams: number;
-  proportion: number; // 0–1 relative to the largest macro
+  proportion: number;
   color: string;
 }
 
 function MacroBar({ label, grams, proportion, color }: MacroBarProps) {
-  // Clamp so the filled segment is always at least a sliver
   const filled   = Math.max(proportion, 0.03);
   const unfilled = Math.max(1 - filled, 0);
   return (
@@ -237,9 +324,7 @@ function FoodItemCard({ item, index }: { item: FoodItem; index: number }) {
         <Text style={styles.foodIndexText}>{index + 1}</Text>
       </View>
       <View style={styles.foodBody}>
-        <Text style={styles.foodName} numberOfLines={1}>
-          {item.item_name}
-        </Text>
+        <Text style={styles.foodName} numberOfLines={1}>{item.item_name}</Text>
         <View style={styles.foodMeta}>
           <Text style={styles.foodGrams}>{item.estimated_grams} g</Text>
           <Text style={styles.foodDot}>·</Text>
@@ -270,7 +355,7 @@ interface ResultsDashboardProps {
 }
 
 function ResultsDashboard({ photoUri, result, onRetake }: ResultsDashboardProps) {
-  // Macros come pre-computed from the backend — no client-side estimation.
+  const router    = useRouter();
   const maxMacroG = Math.max(result.total_protein_g, result.total_carbs_g, result.total_fat_g, 1);
   const avgConf   = Math.round(avgConfidence(result.food_items) * 100);
   const icmrCount = result.food_items.filter((i) => i.nutrition_source === "icmr_nin").length;
@@ -282,18 +367,13 @@ function ResultsDashboard({ photoUri, result, onRetake }: ResultsDashboardProps)
         contentContainerStyle={styles.dashScroll}
         showsVerticalScrollIndicator={false}
       >
-        {/* ── Photo + Summary Header ── */}
+        {/* Photo + Summary Header */}
         <View style={styles.dashHeader}>
-          <Image
-            source={{ uri: photoUri }}
-            style={styles.thumbnail}
-            resizeMode="cover"
-          />
+          <Image source={{ uri: photoUri }} style={styles.thumbnail} resizeMode="cover" />
           <View style={styles.dashHeaderText}>
             <Text style={styles.dashTitle}>Analysis Complete</Text>
             <Text style={styles.dashSubtitle}>
-              {result.food_items.length} item
-              {result.food_items.length !== 1 ? "s" : ""} identified
+              {result.food_items.length} item{result.food_items.length !== 1 ? "s" : ""} identified
             </Text>
             <View style={styles.avgRow}>
               <CheckCircle2 size={12} color={Colors.emerald} strokeWidth={2.5} />
@@ -304,41 +384,24 @@ function ResultsDashboard({ photoUri, result, onRetake }: ResultsDashboardProps)
           </View>
         </View>
 
-        {/* ── Total Calories ── */}
+        {/* Total Calories */}
         <View style={styles.caloriesCard}>
           <View style={styles.caloriesIconWrap}>
             <Flame size={24} color={Colors.emerald} strokeWidth={1.75} />
           </View>
           <View>
             <Text style={styles.caloriesLabel}>TOTAL CALORIES</Text>
-            <Text style={styles.caloriesValue}>
-              {result.total_calories.toLocaleString()}
-            </Text>
+            <Text style={styles.caloriesValue}>{result.total_calories.toLocaleString()}</Text>
             <Text style={styles.caloriesUnit}>kcal · {icmrCount > 0 ? "ICMR-NIN" : "estimated"}</Text>
           </View>
         </View>
 
-        {/* ── Macronutrients ── */}
+        {/* Macronutrients */}
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>MACRONUTRIENTS</Text>
-          <MacroBar
-            label="Protein"
-            grams={result.total_protein_g}
-            proportion={result.total_protein_g / maxMacroG}
-            color={Colors.protein}
-          />
-          <MacroBar
-            label="Carbs"
-            grams={result.total_carbs_g}
-            proportion={result.total_carbs_g / maxMacroG}
-            color={Colors.carbs}
-          />
-          <MacroBar
-            label="Fat"
-            grams={result.total_fat_g}
-            proportion={result.total_fat_g / maxMacroG}
-            color={Colors.fat}
-          />
+          <MacroBar label="Protein" grams={result.total_protein_g} proportion={result.total_protein_g / maxMacroG} color={Colors.protein} />
+          <MacroBar label="Carbs"   grams={result.total_carbs_g}   proportion={result.total_carbs_g / maxMacroG}   color={Colors.carbs} />
+          <MacroBar label="Fat"     grams={result.total_fat_g}     proportion={result.total_fat_g / maxMacroG}     color={Colors.fat} />
           <Text style={styles.disclaimer}>
             * Values sourced from ICMR-NIN "Nutritive Value of Indian Foods" (2017).
             {icmrCount < result.food_items.length
@@ -347,7 +410,7 @@ function ResultsDashboard({ photoUri, result, onRetake }: ResultsDashboardProps)
           </Text>
         </View>
 
-        {/* ── Identified Foods ── */}
+        {/* Identified Foods */}
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>IDENTIFIED FOODS</Text>
           {result.food_items.map((item, i) => (
@@ -355,26 +418,22 @@ function ResultsDashboard({ photoUri, result, onRetake }: ResultsDashboardProps)
           ))}
         </View>
 
-        {/* ── Actions ── */}
+        {/* Actions */}
         <TouchableOpacity
           style={styles.primaryBtn}
           onPress={() =>
-            Alert.alert(
-              "Coming soon",
-              "Meal logging and history will be available in the next release.",
-            )
+            router.push({
+              pathname: "/review",
+              params: { data: JSON.stringify(result), photoUri },
+            })
           }
           activeOpacity={0.82}
         >
           <BookmarkPlus size={18} color={Colors.white} strokeWidth={2} />
-          <Text style={styles.primaryBtnText}>Log to History</Text>
+          <Text style={styles.primaryBtnText}>Adjust & Log Meal</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.outlineBtn}
-          onPress={onRetake}
-          activeOpacity={0.75}
-        >
+        <TouchableOpacity style={styles.outlineBtn} onPress={onRetake} activeOpacity={0.75}>
           <RefreshCw size={16} color={Colors.emerald} strokeWidth={2} />
           <Text style={styles.outlineBtnText}>Retake Scan</Text>
         </TouchableOpacity>
@@ -387,11 +446,9 @@ function ResultsDashboard({ photoUri, result, onRetake }: ResultsDashboardProps)
 export default function CameraScreen() {
   const [permission, requestPermission] = useCameraPermissions();
 
-  // Camera state
-  const [facing, setFacing]         = useState<CameraType>("back");
+  const [facing, setFacing]           = useState<CameraType>("back");
   const [isCapturing, setIsCapturing] = useState(false);
 
-  // Pipeline state
   const [photoUri, setPhotoUri]             = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing]       = useState(false);
   const [loadingMsgIdx, setLoadingMsgIdx]   = useState(0);
@@ -401,7 +458,23 @@ export default function CameraScreen() {
   const cameraRef = useRef<InstanceType<typeof CameraView>>(null);
   const router    = useRouter();
 
-  // Cycle loading messages while backend call is in-flight
+  // ── Breathing pulse animation for the guide ring ─────────────────────────
+  const pulseAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1, duration: 2_200, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 0, duration: 2_200, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulseAnim]);
+
+  const pulseScale   = pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.024] });
+  const pulseOpacity = pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [0.82, 1] });
+
+  // ── Loading message cycle ────────────────────────────────────────────────
   useEffect(() => {
     if (!isAnalyzing) return;
     setLoadingMsgIdx(0);
@@ -420,7 +493,6 @@ export default function CameraScreen() {
     setLoadingMsgIdx(0);
   }, []);
 
-  // POST the compressed image to the backend with a 15 s hard timeout
   const sendToBackend = useCallback(async (uri: string) => {
     setNetworkError(null);
     setIsAnalyzing(true);
@@ -430,11 +502,7 @@ export default function CameraScreen() {
 
     try {
       const formData = new FormData();
-      formData.append("file", {
-        uri,
-        name: "meal.jpg",
-        type: "image/jpeg",
-      } as unknown as Blob);
+      formData.append("file", { uri, name: "meal.jpg", type: "image/jpeg" } as unknown as Blob);
 
       const response = await fetch(`${API_URL}/api/v1/analyze-food`, {
         method: "POST",
@@ -443,14 +511,11 @@ export default function CameraScreen() {
       });
 
       if (!response.ok) {
-        // Extract FastAPI's `detail` string when available; fall back to status code.
         let detail = `Analysis failed (HTTP ${response.status})`;
         try {
           const errBody = await response.json();
           if (errBody?.detail) detail = String(errBody.detail);
-        } catch {
-          // response body wasn't JSON — keep the default
-        }
+        } catch { /* non-JSON body */ }
         throw new Error(detail);
       }
 
@@ -460,12 +525,10 @@ export default function CameraScreen() {
       const isAbort = err instanceof Error && err.name === "AbortError";
       setNetworkError(
         isAbort
-          ? `Request timed out after ${NETWORK_TIMEOUT_MS / 1_000} s. ` +
-            `Ensure the backend is running and your device is on the same WiFi subnet as the server.`
+          ? `Request timed out after ${NETWORK_TIMEOUT_MS / 1_000} s. Ensure the backend is running and your device is on the same WiFi subnet.`
           : err instanceof Error
           ? err.message
-          : `Cannot reach ${API_URL}. ` +
-            `Verify the backend is running on port 8000 and your device shares the same local network.`,
+          : `Cannot reach ${API_URL}. Verify the backend is running on port 8000.`,
       );
     } finally {
       clearTimeout(timeoutId);
@@ -473,27 +536,22 @@ export default function CameraScreen() {
     }
   }, []);
 
-  // Capture → compress → send
   const takePicture = useCallback(async () => {
     if (!cameraRef.current || isCapturing) return;
     setIsCapturing(true);
     try {
       const photo = await cameraRef.current.takePictureAsync({ quality: 0.85 });
       if (!photo) return;
-
       const ctx        = ImageManipulator.manipulate(photo.uri);
       ctx.resize({ width: 1024 });
       const frame      = await ctx.renderAsync();
       const compressed = await frame.saveAsync({ compress: 0.82, format: SaveFormat.JPEG });
-
       setPhotoUri(compressed.uri);
       await sendToBackend(compressed.uri);
     } catch (err: unknown) {
       Alert.alert(
         "Capture failed",
-        err instanceof Error
-          ? err.message
-          : "Could not capture or process the image. Please try again.",
+        err instanceof Error ? err.message : "Could not capture or process the image. Please try again.",
       );
     } finally {
       setIsCapturing(false);
@@ -505,13 +563,7 @@ export default function CameraScreen() {
   if (!permission.granted) return <PermissionGate onRequest={requestPermission} />;
 
   if (analysisResult && photoUri) {
-    return (
-      <ResultsDashboard
-        photoUri={photoUri}
-        result={analysisResult}
-        onRetake={resetState}
-      />
-    );
+    return <ResultsDashboard photoUri={photoUri} result={analysisResult} onRetake={resetState} />;
   }
 
   // ── Camera View ──────────────────────────────────────────────────────────
@@ -520,7 +572,7 @@ export default function CameraScreen() {
       <StatusBar style="light" />
       <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing={facing} />
 
-      {/* Vignette keeps controls legible over any scene */}
+      {/* Vignette */}
       <View style={[styles.vignette, { pointerEvents: "none" }]} />
 
       <SafeAreaView style={styles.overlay} edges={["top", "bottom"]}>
@@ -533,11 +585,10 @@ export default function CameraScreen() {
             <View style={styles.liveDot} />
             <Text style={styles.liveText}>LIVE</Text>
           </View>
-          {/* Balancing spacer */}
           <View style={styles.iconBtn} />
         </View>
 
-        {/* Viewfinder — shows error card when a previous attempt failed */}
+        {/* Viewfinder / guide ring */}
         <View style={styles.finderWrapper}>
           {networkError ? (
             <NetworkErrorCard
@@ -546,14 +597,17 @@ export default function CameraScreen() {
             />
           ) : (
             <>
-              <View style={styles.finder}>
-                <ScanCorner top left />
-                <ScanCorner top={false} left />
-                <ScanCorner top left={false} />
-                <ScanCorner top={false} left={false} />
+              {/* Stacking container — ring SVG + scanner clip sit on top of each other */}
+              <View style={styles.guideOuter}>
+                {/* Scanner line — clipped to circle shape */}
+                <ScannerLine active={isAnalyzing} />
+
+                {/* Pulsing dashed ring (above scanner) */}
+                <ThaliGuideRing pulseScale={pulseScale} pulseOpacity={pulseOpacity} />
               </View>
+
               <Text style={styles.finderHint}>
-                Frame the full plate within the guide
+                {isAnalyzing ? "Analyzing your thali..." : "Place your Thali inside the ring"}
               </Text>
             </>
           )}
@@ -575,21 +629,14 @@ export default function CameraScreen() {
             activeOpacity={0.88}
             disabled={isCapturing}
           >
-            <View style={styles.captureInner}>
-              <ScanLine
-                size={26}
-                color={isCapturing ? Colors.mint : Colors.white}
-                strokeWidth={2}
-              />
-            </View>
+            <View style={styles.captureInner} />
           </TouchableOpacity>
 
-          {/* Reserved for flash toggle */}
           <View style={styles.controlBtn} />
         </View>
       </SafeAreaView>
 
-      {/* Loading overlay sits above everything while the backend responds */}
+      {/* Frosted-glass loading overlay */}
       {isAnalyzing && <LoadingOverlay msgIndex={loadingMsgIdx} />}
     </View>
   );
@@ -597,20 +644,17 @@ export default function CameraScreen() {
 
 // ─── 9. StyleSheet ────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  // ── Shared ────────────────────────────────────────────────────────────────
   blank: { flex: 1, backgroundColor: Colors.slate900 },
 
-  // ── Camera screen ─────────────────────────────────────────────────────────
+  // Camera screen shell
   root:    { flex: 1, backgroundColor: Colors.slate900 },
-  vignette: { ...StyleSheet.absoluteFillObject, backgroundColor: alpha(Colors.slate900, 55) },
+  vignette: { ...StyleSheet.absoluteFillObject, backgroundColor: alpha(Colors.slate900, 60) },
   overlay:  { flex: 1, justifyContent: "space-between" },
 
+  // Top bar
   topBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingTop: 8,
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: 20, paddingTop: 8,
   },
   iconBtn: {
     width: 40, height: 40, borderRadius: 20,
@@ -626,11 +670,56 @@ const styles = StyleSheet.create({
   liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.emerald },
   liveText: { color: Colors.mint, fontSize: 11, fontWeight: "700", letterSpacing: 1.2 },
 
-  finderWrapper: { alignItems: "center", gap: 16 },
-  finder: { width: 280, height: 280 },
-  corner: { position: "absolute", width: CORNER_SIZE, height: CORNER_SIZE, borderColor: Colors.emerald },
-  finderHint: { color: alpha(Colors.white, 180), fontSize: 13, textAlign: "center", letterSpacing: 0.2 },
+  // Viewfinder
+  finderWrapper: { alignItems: "center", gap: 18 },
 
+  // Guide ring stacking container
+  guideOuter: {
+    width: GUIDE_DIAMETER,
+    height: GUIDE_DIAMETER,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  // Dashed ring SVG wrapper (pulse-animated)
+  guideRingWrap: {
+    position: "absolute",
+    width: GUIDE_DIAMETER,
+    height: GUIDE_DIAMETER,
+  },
+
+  // Scanner line clip (circular overflow:hidden so bar is invisible outside the ring)
+  scannerClip: {
+    position: "absolute",
+    width: CLIP_DIAMETER,
+    height: CLIP_DIAMETER,
+    borderRadius: CLIP_RADIUS,
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  // The sweeping bar itself
+  scannerBar: {
+    width: CLIP_DIAMETER,
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: "rgba(16,185,129,0.75)",
+    shadowColor: Colors.emerald,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 1,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+
+  finderHint: {
+    color: alpha(Colors.white, 185),
+    fontSize: 13,
+    textAlign: "center",
+    letterSpacing: 0.3,
+  },
+
+  // Bottom controls
   controls: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: 40, paddingBottom: 12,
@@ -642,50 +731,75 @@ const styles = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
   },
   captureBtn: {
-    width: 76, height: 76, borderRadius: 38,
+    width: 78, height: 78, borderRadius: 39,
     backgroundColor: Colors.emerald, borderWidth: 3, borderColor: Colors.mint,
     alignItems: "center", justifyContent: "center",
     shadowColor: Colors.emerald, shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.6, shadowRadius: 16, elevation: 12,
+    shadowOpacity: 0.65, shadowRadius: 18, elevation: 14,
   },
   captureBtnBusy: { backgroundColor: Colors.teal, borderColor: Colors.emerald },
   captureInner: {
-    width: 58, height: 58, borderRadius: 29,
-    backgroundColor: alpha(Colors.slate900, 40),
-    alignItems: "center", justifyContent: "center",
+    width: 56, height: 56, borderRadius: 28,
+    backgroundColor: alpha(Colors.white, 30),
   },
 
-  // ── Loading overlay ────────────────────────────────────────────────────────
+  // ── Frosted-glass loading overlay ─────────────────────────────────────────
   loadingRoot: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: alpha(Colors.slate900, 195),
-    alignItems: "center", justifyContent: "center", padding: 28,
+    // Simulate frosted glass: very dark translucent slate
+    backgroundColor: "rgba(15,23,42,0.88)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 28,
   },
   loadingCard: {
-    width: "100%", maxWidth: 320,
-    backgroundColor: Colors.slate800,
-    borderRadius: 24, borderWidth: 1, borderColor: alpha(Colors.emerald, 65),
-    paddingVertical: 36, paddingHorizontal: 28,
-    alignItems: "center", gap: 20,
-    // Emerald glow — visible on iOS
-    shadowColor: Colors.emerald, shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.35, shadowRadius: 36, elevation: 20,
+    width: "100%",
+    maxWidth: 320,
+    backgroundColor: "rgba(30,41,59,0.96)",
+    borderRadius: 26,
+    borderWidth: 1,
+    borderColor: alpha(Colors.emerald, 70),
+    paddingVertical: 36,
+    paddingHorizontal: 28,
+    alignItems: "center",
+    gap: 18,
+    shadowColor: Colors.emerald,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.4,
+    shadowRadius: 40,
+    elevation: 24,
   },
   glowRing: {
-    width: 72, height: 72, borderRadius: 36,
-    backgroundColor: alpha(Colors.emerald, 22),
-    borderWidth: 2, borderColor: alpha(Colors.emerald, 110),
+    width: 76, height: 76, borderRadius: 38,
+    backgroundColor: alpha(Colors.emerald, 20),
+    borderWidth: 2, borderColor: alpha(Colors.mint, 120),
     alignItems: "center", justifyContent: "center",
-    shadowColor: Colors.emerald, shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.9, shadowRadius: 22, elevation: 14,
+    shadowColor: Colors.mint,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 1,
+    shadowRadius: 24,
+    elevation: 16,
+  },
+  loadingStatus: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: Colors.teal,
+    letterSpacing: 2,
+    textTransform: "uppercase",
   },
   loadingMsg: {
-    color: Colors.white, fontSize: 15, fontWeight: "600",
-    textAlign: "center", lineHeight: 22,
+    fontFamily: MONO,
+    color: Colors.mint,
+    fontSize: 13.5,
+    fontWeight: "400",
+    textAlign: "center",
+    lineHeight: 22,
+    paddingHorizontal: 4,
   },
-  dotsRow:   { flexDirection: "row", gap: 8 },
-  dot:       { width: 7, height: 7, borderRadius: 3.5 },
-  dotActive: { backgroundColor: Colors.emerald, transform: [{ scale: 1.35 }] },
+  dotsRow:    { flexDirection: "row", gap: 7 },
+  dot:        { width: 7, height: 7, borderRadius: 3.5 },
+  dotActive:  { backgroundColor: Colors.emerald, transform: [{ scale: 1.4 }] },
+  dotInactive: { backgroundColor: alpha(Colors.emerald, 55) },
   poweredByRow: { flexDirection: "row", alignItems: "center", gap: 5 },
   poweredByText: { fontSize: 11, color: Colors.teal, fontWeight: "500" },
 
@@ -710,9 +824,7 @@ const styles = StyleSheet.create({
     alignItems: "center", justifyContent: "center", padding: 36, gap: 16,
   },
   permTitle: { fontSize: 22, fontWeight: "700", color: Colors.white, textAlign: "center" },
-  permBody: {
-    fontSize: 14, color: Colors.slate400, textAlign: "center", lineHeight: 22, maxWidth: 280,
-  },
+  permBody:  { fontSize: 14, color: Colors.slate400, textAlign: "center", lineHeight: 22, maxWidth: 280 },
   permBtn: {
     backgroundColor: Colors.emerald, paddingHorizontal: 32, paddingVertical: 14,
     borderRadius: 14, marginTop: 8,
@@ -720,14 +832,13 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.4, shadowRadius: 12, elevation: 8,
   },
   permBtnText: { color: Colors.white, fontWeight: "700", fontSize: 16 },
-  permBack:     { paddingVertical: 8 },
+  permBack:    { paddingVertical: 8 },
   permBackText: { color: Colors.slate400, fontSize: 14 },
 
   // ── Results dashboard ──────────────────────────────────────────────────────
   dashRoot:   { flex: 1, backgroundColor: Colors.slate50 },
   dashScroll: { flexGrow: 1, padding: 18, paddingTop: 12, paddingBottom: 48, gap: 14 },
 
-  // Header row (photo + summary)
   dashHeader: {
     flexDirection: "row", alignItems: "center", gap: 14,
     backgroundColor: Colors.white, borderRadius: 18,
@@ -735,14 +846,13 @@ const styles = StyleSheet.create({
     shadowColor: Colors.slate900, shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05, shadowRadius: 8, elevation: 2,
   },
-  thumbnail:     { width: 72, height: 72, borderRadius: 12 },
+  thumbnail:      { width: 72, height: 72, borderRadius: 12 },
   dashHeaderText: { flex: 1, gap: 3 },
-  dashTitle:     { fontSize: 16, fontWeight: "700", color: Colors.slate900 },
-  dashSubtitle:  { fontSize: 13, color: Colors.slate600 },
-  avgRow:        { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 2 },
-  avgText:       { fontSize: 12, color: Colors.emerald, fontWeight: "600" },
+  dashTitle:      { fontSize: 16, fontWeight: "700", color: Colors.slate900 },
+  dashSubtitle:   { fontSize: 13, color: Colors.slate600 },
+  avgRow:         { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 2 },
+  avgText:        { fontSize: 12, color: Colors.emerald, fontWeight: "600" },
 
-  // Calories card
   caloriesCard: {
     flexDirection: "row", alignItems: "center", gap: 18,
     backgroundColor: alpha(Colors.emerald, 16),
@@ -760,7 +870,6 @@ const styles = StyleSheet.create({
   caloriesValue: { fontSize: 44, fontWeight: "800", color: Colors.emerald, lineHeight: 50 },
   caloriesUnit:  { fontSize: 12, color: Colors.slate600 },
 
-  // Shared card shell
   card: {
     backgroundColor: Colors.white, borderRadius: 18,
     borderWidth: 1, borderColor: Colors.zinc, padding: 18, gap: 14,
@@ -773,11 +882,10 @@ const styles = StyleSheet.create({
   },
   disclaimer: { fontSize: 11, color: Colors.slate400, lineHeight: 16 },
 
-  // Macro bar
-  macroRow:     { flexDirection: "row", alignItems: "center", gap: 10 },
+  macroRow:      { flexDirection: "row", alignItems: "center", gap: 10 },
   macroLabelCol: { flexDirection: "row", alignItems: "center", gap: 7, width: 68 },
-  macroDot:     { width: 8, height: 8, borderRadius: 4 },
-  macroLabel:   { fontSize: 13, fontWeight: "600", color: Colors.slate900 },
+  macroDot:      { width: 8, height: 8, borderRadius: 4 },
+  macroLabel:    { fontSize: 13, fontWeight: "600", color: Colors.slate900 },
   macroTrack: {
     flex: 1, height: 10, borderRadius: 5,
     backgroundColor: Colors.slate100,
@@ -786,7 +894,6 @@ const styles = StyleSheet.create({
   macroFill:  { borderRadius: 5 },
   macroValue: { fontSize: 13, fontWeight: "700", width: 36, textAlign: "right" },
 
-  // Food item card
   foodCard: {
     flexDirection: "row", alignItems: "center", gap: 12,
     paddingVertical: 11,
@@ -812,7 +919,6 @@ const styles = StyleSheet.create({
   },
   badgeText: { fontSize: 11, fontWeight: "700" },
 
-  // Action buttons
   primaryBtn: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10,
     backgroundColor: Colors.emerald, paddingVertical: 16, borderRadius: 16,

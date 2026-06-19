@@ -1,234 +1,525 @@
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import React, { useRef } from "react";
+import {
+  Animated,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import { useRouter } from "expo-router";
-import { Camera, ChefHat, Zap } from "lucide-react-native";
-import { StatusBar } from "expo-status-bar";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Svg, { Circle, G } from "react-native-svg";
+import { History, User } from "lucide-react-native";
 import { Colors, alpha } from "@/constants/colors";
 
-// ─── Macro Pill ─────────────────────────────────────────────────────────────
-interface MacroPillProps {
+// ─── Design tokens ───────────────────────────────────────────────────────────
+const EMERALD_LEAF = "#059669";
+const FAB_HEIGHT = 58;
+
+// ─── Calorie budget constants ────────────────────────────────────────────────
+const TARGET_KCAL = 2300;
+const CONSUMED_KCAL = 850;
+const REMAINING_KCAL = TARGET_KCAL - CONSUMED_KCAL; // 1,450
+
+// ─── SVG ring geometry ───────────────────────────────────────────────────────
+const RING_SIZE = 190;
+const RING_CENTER = RING_SIZE / 2;
+const RING_RADIUS = 76;
+const STROKE_WIDTH = 14;
+const CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+const REMAINING_FRAC = REMAINING_KCAL / TARGET_KCAL;
+const RING_DASH_OFFSET = CIRCUMFERENCE * (1 - REMAINING_FRAC);
+
+// ─── Static data types ───────────────────────────────────────────────────────
+interface MacroData {
   label: string;
-  detail: string;
+  current: number;
+  target: number;
+  unit: string;
+  pct: number;
   color: string;
 }
 
-function MacroPill({ label, detail, color }: MacroPillProps) {
+interface MealEntry {
+  emoji: string;
+  name: string;
+  mealType: string;
+  kcal: number;
+}
+
+const MACROS: MacroData[] = [
+  { label: "Protein", current: 30,   target: 85,  unit: "g", pct: 35, color: Colors.protein },
+  { label: "Carbs",   current: 150,  target: 250, unit: "g", pct: 60, color: Colors.carbs },
+  { label: "Fats",    current: 10.5, target: 70,  unit: "g", pct: 15, color: Colors.fat },
+];
+
+const MEALS: MealEntry[] = [
+  { emoji: "🥘", name: "Masala Dosa + Chutney",        mealType: "Breakfast", kcal: 380 },
+  { emoji: "🍛", name: "Paneer Butter Masala + Roti",  mealType: "Lunch",     kcal: 470 },
+];
+
+function formatDate(): string {
+  return new Date().toLocaleDateString("en-IN", {
+    weekday: "long",
+    day: "numeric",
+    month: "short",
+  });
+}
+
+// ─── Macro Card ──────────────────────────────────────────────────────────────
+function MacroCard({ label, current, target, unit, pct, color }: MacroData) {
   return (
-    <View style={[styles.pill, { backgroundColor: alpha(color, 18), borderColor: alpha(color, 55) }]}>
-      <View style={[styles.pillDot, { backgroundColor: color }]} />
-      <View style={styles.pillText}>
-        <Text style={[styles.pillLabel, { color }]}>{label}</Text>
-        <Text style={styles.pillDetail}>{detail}</Text>
+    <View style={[styles.macroCard, { borderColor: alpha(color, 50) }]}>
+      <View style={[styles.macroColorDot, { backgroundColor: color }]} />
+      <Text style={[styles.macroLabel, { color }]}>{label}</Text>
+      <View style={styles.macroBarTrack}>
+        <View
+          style={[styles.macroBarFill, { width: `${pct}%`, backgroundColor: color }]}
+        />
+      </View>
+      <Text style={styles.macroDetail}>
+        {current}
+        {unit} / {target}
+        {unit}
+      </Text>
+    </View>
+  );
+}
+
+// ─── Meal Row ────────────────────────────────────────────────────────────────
+function MealRow({ emoji, name, mealType, kcal }: MealEntry) {
+  return (
+    <View style={styles.mealRow}>
+      <View style={styles.mealEmojiBox}>
+        <Text style={styles.mealEmojiText}>{emoji}</Text>
+      </View>
+      <View style={styles.mealInfo}>
+        <Text style={styles.mealName} numberOfLines={1}>{name}</Text>
+        <Text style={styles.mealType}>{mealType}</Text>
+      </View>
+      <View style={styles.mealKcalCol}>
+        <Text style={styles.mealKcal}>{kcal}</Text>
+        <Text style={styles.mealKcalUnit}>kcal</Text>
       </View>
     </View>
   );
 }
 
-// ─── How-It-Works Step ──────────────────────────────────────────────────────
-function Step({ n, label }: { n: string; label: string }) {
-  return (
-    <View style={styles.step}>
-      <View style={styles.stepBadge}>
-        <Text style={styles.stepN}>{n}</Text>
-      </View>
-      <Text style={styles.stepLabel}>{label}</Text>
-    </View>
-  );
-}
-
-// ─── Screen ─────────────────────────────────────────────────────────────────
+// ─── Screen ──────────────────────────────────────────────────────────────────
 export default function HomeScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const fabScale = useRef(new Animated.Value(1)).current;
+
+  const onFabPressIn = () =>
+    Animated.spring(fabScale, {
+      toValue: 0.94,
+      useNativeDriver: true,
+      speed: 60,
+      bounciness: 8,
+    }).start();
+
+  const onFabPressOut = () =>
+    Animated.spring(fabScale, {
+      toValue: 1,
+      useNativeDriver: true,
+      speed: 30,
+      bounciness: 14,
+    }).start();
+
+  const fabBottom = insets.bottom + 20;
 
   return (
-    <View style={styles.root}>
-      <StatusBar style="dark" />
+    <View style={[styles.root, { paddingTop: insets.top }]}>
       <ScrollView
-        contentContainerStyle={styles.scroll}
+        contentContainerStyle={[
+          styles.scroll,
+          { paddingBottom: FAB_HEIGHT + fabBottom + 20 },
+        ]}
         showsVerticalScrollIndicator={false}
       >
-        {/* ── Hero ── */}
-        <View style={styles.hero}>
-          <View style={styles.iconRing}>
-            <View style={styles.iconCore}>
-              <ChefHat size={36} color={Colors.emerald} strokeWidth={1.75} />
+        {/* ── Header ─────────────────────────────────────────────────── */}
+        <View style={styles.header}>
+          <View style={styles.headerLeft}>
+            <View style={styles.avatar}>
+              <User size={22} color={Colors.emerald} strokeWidth={2} />
+            </View>
+            <View>
+              <Text style={styles.greeting}>Namaste, Ravi! 🙏</Text>
+              <Text style={styles.greetingDate}>{formatDate()}</Text>
             </View>
           </View>
 
-          <Text style={styles.title}>Indian Calorie{"\n"}Tracker</Text>
-          <Text style={styles.subtitle}>
-            Point your camera at any Indian dish. Get instant portion weights and macro breakdowns powered by Gemini Vision.
+          <TouchableOpacity style={styles.historyBadge} activeOpacity={0.75}>
+            <History size={13} color={Colors.teal} strokeWidth={2} />
+            <Text style={styles.historyText}>Scan History</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* ── Calorie Ring Card ─────────────────────────────────────── */}
+        <View style={styles.ringCard}>
+          <Text style={styles.ringCardLabel}>TODAY'S CALORIE BUDGET</Text>
+
+          <View style={styles.ringWrapper}>
+            <Svg
+              width={RING_SIZE}
+              height={RING_SIZE}
+              viewBox={`0 0 ${RING_SIZE} ${RING_SIZE}`}
+            >
+              {/* Background track */}
+              <Circle
+                cx={RING_CENTER}
+                cy={RING_CENTER}
+                r={RING_RADIUS}
+                stroke={Colors.slate100}
+                strokeWidth={STROKE_WIDTH}
+                fill="none"
+              />
+              {/* Remaining arc — rotated so arc begins at 12 o'clock */}
+              <G transform={`rotate(-90, ${RING_CENTER}, ${RING_CENTER})`}>
+                <Circle
+                  cx={RING_CENTER}
+                  cy={RING_CENTER}
+                  r={RING_RADIUS}
+                  stroke={EMERALD_LEAF}
+                  strokeWidth={STROKE_WIDTH}
+                  fill="none"
+                  strokeDasharray={String(CIRCUMFERENCE)}
+                  strokeDashoffset={RING_DASH_OFFSET}
+                  strokeLinecap="round"
+                />
+              </G>
+            </Svg>
+
+            {/* Centered numeric overlay */}
+            <View style={styles.ringOverlay}>
+              <Text style={styles.ringNumber}>1,450</Text>
+              <Text style={styles.ringSubLabel}>kcal remaining</Text>
+            </View>
+          </View>
+
+          <Text style={styles.ringProgress}>
+            {CONSUMED_KCAL.toLocaleString()} / {TARGET_KCAL.toLocaleString()} kcal consumed
           </Text>
         </View>
 
-        {/* ── Macro Indicators ── */}
+        {/* ── Macro Row ─────────────────────────────────────────────── */}
         <View style={styles.macroRow}>
-          <MacroPill label="Protein"  detail="Grams tracked" color={Colors.protein} />
-          <MacroPill label="Carbs"    detail="Fuel mapped"   color={Colors.carbs}   />
-          <MacroPill label="Fat"      detail="Intake logged" color={Colors.fat}      />
+          {MACROS.map((m) => (
+            <MacroCard key={m.label} {...m} />
+          ))}
         </View>
 
-        {/* ── How It Works ── */}
-        <View style={styles.stepsCard}>
-          <Text style={styles.stepsTitle}>How it works</Text>
-          <Step n="1" label="Photograph your plate — thali, bowl, or snack" />
-          <View style={styles.stepDivider} />
-          <Step n="2" label="Gemini Vision identifies every dish and estimates grams" />
-          <View style={styles.stepDivider} />
-          <Step n="3" label="See a full macro breakdown — protein, carbs, and fat" />
-        </View>
+        {/* ── Meal Log ──────────────────────────────────────────────── */}
+        <View style={styles.mealCard}>
+          <View style={styles.mealCardHeader}>
+            <Text style={styles.mealCardTitle}>Today's Swasth Scans</Text>
+            <View style={styles.mealCountBadge}>
+              <Text style={styles.mealCountText}>{MEALS.length}</Text>
+            </View>
+          </View>
 
-        {/* ── CTA ── */}
-        <TouchableOpacity
-          style={styles.cta}
-          onPress={() => router.push("/camera")}
-          activeOpacity={0.82}
-        >
-          <Camera size={20} color={Colors.white} strokeWidth={2} />
-          <Text style={styles.ctaText}>Scan Your Meal</Text>
-        </TouchableOpacity>
-
-        {/* ── Footer ── */}
-        <View style={styles.poweredBy}>
-          <Zap size={11} color={Colors.teal} />
-          <Text style={styles.poweredByText}>Powered by Gemini 2.5 Flash Vision</Text>
+          {MEALS.map((meal, i) => (
+            <React.Fragment key={meal.name}>
+              <MealRow {...meal} />
+              {i < MEALS.length - 1 && <View style={styles.mealDivider} />}
+            </React.Fragment>
+          ))}
         </View>
       </ScrollView>
+
+      {/* ── Floating Action Button ────────────────────────────────── */}
+      <Animated.View
+        style={[
+          styles.fabWrap,
+          { bottom: fabBottom, transform: [{ scale: fabScale }] },
+        ]}
+      >
+        <TouchableOpacity
+          style={styles.fab}
+          activeOpacity={1}
+          onPressIn={onFabPressIn}
+          onPressOut={onFabPressOut}
+          onPress={() => router.push("/camera")}
+        >
+          <Text style={styles.fabText}>📷  SCAN NEW THALI</Text>
+        </TouchableOpacity>
+      </Animated.View>
     </View>
   );
 }
 
-// ─── Styles ─────────────────────────────────────────────────────────────────
+// ─── Styles ──────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: Colors.slate50 },
-
-  scroll: {
-    flexGrow: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 22,
-    paddingTop: 32,
-    paddingBottom: 48,
-    gap: 28,
-  },
-
-  // Hero
-  hero: { alignItems: "center", gap: 14 },
-  iconRing: {
-    width: 104,
-    height: 104,
-    borderRadius: 52,
-    backgroundColor: alpha(Colors.mint, 28),
-    borderWidth: 1.5,
-    borderColor: alpha(Colors.mint, 70),
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  iconCore: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
-    backgroundColor: alpha(Colors.emerald, 22),
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  title: {
-    fontSize: 34,
-    fontWeight: "800",
-    color: Colors.slate900,
-    textAlign: "center",
-    lineHeight: 42,
-    letterSpacing: -0.6,
-  },
-  subtitle: {
-    fontSize: 15,
-    lineHeight: 23,
-    color: Colors.slate600,
-    textAlign: "center",
-    maxWidth: 300,
-  },
-
-  // Macros
-  macroRow: { flexDirection: "row", gap: 10, width: "100%" },
-  pill: {
+  root: {
     flex: 1,
+    backgroundColor: Colors.backdrop,
+  },
+  scroll: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    gap: 20,
+  },
+
+  // Header
+  header: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 7,
-    padding: 11,
-    borderRadius: 14,
-    borderWidth: 1,
+    justifyContent: "space-between",
   },
-  pillDot: { width: 8, height: 8, borderRadius: 4, flexShrink: 0 },
-  pillText: { flexShrink: 1 },
-  pillLabel: { fontSize: 11, fontWeight: "700", letterSpacing: 0.2 },
-  pillDetail: { fontSize: 10, color: Colors.slate400, marginTop: 2 },
+  headerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  avatar: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: alpha(Colors.emerald, 22),
+    borderWidth: 1.5,
+    borderColor: alpha(Colors.emerald, 60),
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  greeting: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: Colors.slate900,
+    letterSpacing: -0.3,
+  },
+  greetingDate: {
+    fontSize: 12,
+    color: Colors.slate400,
+    marginTop: 2,
+  },
+  historyBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: alpha(Colors.teal, 18),
+    borderWidth: 1,
+    borderColor: alpha(Colors.teal, 55),
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  historyText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: Colors.teal,
+  },
 
-  // Steps card
-  stepsCard: {
-    width: "100%",
+  // Calorie Ring Card
+  ringCard: {
     backgroundColor: Colors.white,
-    borderRadius: 18,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: Colors.zinc,
+    alignItems: "center",
+    paddingVertical: 24,
+    paddingHorizontal: 20,
+    gap: 12,
+    shadowColor: Colors.slate900,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    elevation: 3,
+  },
+  ringCardLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: Colors.slate400,
+    letterSpacing: 1.4,
+    textTransform: "uppercase",
+  },
+  ringWrapper: {
+    width: RING_SIZE,
+    height: RING_SIZE,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  ringOverlay: {
+    position: "absolute",
+    alignItems: "center",
+  },
+  ringNumber: {
+    fontSize: 38,
+    fontWeight: "800",
+    color: EMERALD_LEAF,
+    letterSpacing: -1.5,
+  },
+  ringSubLabel: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: Colors.slate600,
+    marginTop: 2,
+  },
+  ringProgress: {
+    fontSize: 13,
+    color: Colors.slate400,
+    fontWeight: "500",
+  },
+
+  // Macro Row
+  macroRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  macroCard: {
+    flex: 1,
+    backgroundColor: Colors.white,
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 12,
+    gap: 6,
+    shadowColor: Colors.slate900,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  macroColorDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  macroLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.1,
+  },
+  macroBarTrack: {
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: Colors.slate100,
+    overflow: "hidden",
+  },
+  macroBarFill: {
+    height: "100%",
+    borderRadius: 3,
+  },
+  macroDetail: {
+    fontSize: 10,
+    color: Colors.slate400,
+    fontWeight: "500",
+  },
+
+  // Meal Card
+  mealCard: {
+    backgroundColor: Colors.white,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: Colors.zinc,
     paddingVertical: 18,
-    paddingHorizontal: 20,
-    gap: 4,
+    paddingHorizontal: 16,
     shadowColor: Colors.slate900,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
     shadowRadius: 8,
     elevation: 2,
+    gap: 4,
   },
-  stepsTitle: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: Colors.slate400,
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
+  mealCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     marginBottom: 10,
   },
-  step: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 6 },
-  stepBadge: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+  mealCardTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: Colors.slate900,
+    letterSpacing: -0.2,
+  },
+  mealCountBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     backgroundColor: alpha(Colors.emerald, 22),
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  mealCountText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: Colors.emerald,
+  },
+  mealRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 8,
+  },
+  mealEmojiBox: {
+    width: 46,
+    height: 46,
+    borderRadius: 12,
+    backgroundColor: Colors.slate100,
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
   },
-  stepN: { fontSize: 12, fontWeight: "800", color: Colors.emerald },
-  stepLabel: { fontSize: 13.5, color: Colors.slate900, flex: 1, lineHeight: 20 },
-  stepDivider: {
+  mealEmojiText: {
+    fontSize: 22,
+  },
+  mealInfo: {
+    flex: 1,
+    gap: 3,
+  },
+  mealName: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: Colors.slate900,
+  },
+  mealType: {
+    fontSize: 12,
+    color: Colors.slate400,
+  },
+  mealKcalCol: {
+    alignItems: "flex-end",
+    gap: 1,
+  },
+  mealKcal: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: EMERALD_LEAF,
+    letterSpacing: -0.5,
+  },
+  mealKcalUnit: {
+    fontSize: 10,
+    color: Colors.slate400,
+    fontWeight: "500",
+  },
+  mealDivider: {
     height: 1,
-    backgroundColor: Colors.zinc,
-    marginLeft: 38,
+    backgroundColor: Colors.slate100,
+    marginLeft: 58,
   },
 
-  // CTA
-  cta: {
-    flexDirection: "row",
+  // FAB
+  fabWrap: {
+    position: "absolute",
+    alignSelf: "center",
+  },
+  fab: {
+    height: FAB_HEIGHT,
+    paddingHorizontal: 36,
+    borderRadius: FAB_HEIGHT / 2,
     alignItems: "center",
     justifyContent: "center",
-    gap: 10,
-    width: "100%",
-    paddingVertical: 17,
-    borderRadius: 16,
     backgroundColor: Colors.emerald,
     shadowColor: Colors.emerald,
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.38,
-    shadowRadius: 14,
-    elevation: 10,
+    shadowOpacity: 0.48,
+    shadowRadius: 18,
+    elevation: 14,
   },
-  ctaText: {
+  fabText: {
+    fontSize: 15,
+    fontWeight: "800",
     color: Colors.white,
-    fontSize: 17,
-    fontWeight: "700",
-    letterSpacing: 0.2,
+    letterSpacing: 0.8,
   },
-
-  // Footer
-  poweredBy: { flexDirection: "row", alignItems: "center", gap: 5 },
-  poweredByText: { fontSize: 12, color: Colors.teal, fontWeight: "500" },
 });
