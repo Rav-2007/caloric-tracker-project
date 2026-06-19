@@ -1,0 +1,51 @@
+{
+  "expo": {
+    "name": "Calorie Tracker",
+    "slug": "calorie-tracker",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.yourteam.calorietracker",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Used to photograph your meals for calorie analysis.",
+        "NSPhotoLibraryUsageDescription": "Used to select meal photos from your library."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.yourteam.calorietracker",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Calorie Tracker to access your camera to photograph meals."
+        }
+      ]
+    ],
+    "scheme": "calorie-tracker",
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

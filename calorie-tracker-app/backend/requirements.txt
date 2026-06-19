@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+google-genai
+pydantic
+python-dotenv
+httpx
+asyncpg
+sqlalchemy>=2.0
+greenlet
+python-multipart
