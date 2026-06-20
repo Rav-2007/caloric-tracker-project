@@ -9,29 +9,43 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Svg, { Circle, G } from "react-native-svg";
-import { History, User } from "lucide-react-native";
-import { Colors, alpha } from "@/constants/colors";
+import Svg, { Circle, Defs, G, LinearGradient, Rect, Stop } from "react-native-svg";
+import {
+  BarChart2,
+  BookOpen,
+  Camera,
+  ChevronRight,
+  Flame,
+  History,
+  Home,
+  MoreHorizontal,
+  User,
+} from "lucide-react-native";
+import { PremiumProfileCard } from "@/components/PremiumProfileCard";
 
 // ─── Design tokens ───────────────────────────────────────────────────────────
-const EMERALD_LEAF = "#059669";
-const FAB_HEIGHT = 58;
+const OFF_WHITE  = "#F8FAFC";
+const SKY_BLUE   = "#55CDFC";
+const CHARCOAL   = "#0F172A";
+const SLATE_GRAY = "#64748B";
+const SCAN_BTN_SIZE = 60;
 
-// ─── Calorie budget constants ────────────────────────────────────────────────
-const TARGET_KCAL = 2300;
-const CONSUMED_KCAL = 850;
-const REMAINING_KCAL = TARGET_KCAL - CONSUMED_KCAL; // 1,450
+// ─── Calorie budget ──────────────────────────────────────────────────────────
+const TARGET_KCAL    = 2500;
+const CONSUMED_KCAL  = 655;
+const REMAINING_KCAL = TARGET_KCAL - CONSUMED_KCAL;
 
-// ─── SVG ring geometry ───────────────────────────────────────────────────────
-const RING_SIZE = 190;
-const RING_CENTER = RING_SIZE / 2;
-const RING_RADIUS = 76;
-const STROKE_WIDTH = 14;
-const CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+// ─── Hero ring geometry ──────────────────────────────────────────────────────
+const RING_SIZE      = 116;
+const RING_CENTER    = RING_SIZE / 2;
+const RING_RADIUS    = 46;
+const STROKE_WIDTH   = 9;
+const CIRCUMFERENCE  = 2 * Math.PI * RING_RADIUS;
 const REMAINING_FRAC = REMAINING_KCAL / TARGET_KCAL;
-const RING_DASH_OFFSET = CIRCUMFERENCE * (1 - REMAINING_FRAC);
+const RING_OFFSET    = CIRCUMFERENCE * (1 - REMAINING_FRAC);
+const PCT_DISPLAY    = Math.floor(REMAINING_FRAC * 100);
 
-// ─── Static data types ───────────────────────────────────────────────────────
+// ─── Static data ─────────────────────────────────────────────────────────────
 interface MacroData {
   label: string;
   current: number;
@@ -49,40 +63,42 @@ interface MealEntry {
 }
 
 const MACROS: MacroData[] = [
-  { label: "Protein", current: 30,   target: 85,  unit: "g", pct: 35, color: Colors.protein },
-  { label: "Carbs",   current: 150,  target: 250, unit: "g", pct: 60, color: Colors.carbs },
-  { label: "Fats",    current: 10.5, target: 70,  unit: "g", pct: 15, color: Colors.fat },
+  { label: "Protein", current: 112, target: 160, unit: "g", pct: 70, color: "#F97316" },
+  { label: "Carbs",   current: 182, target: 250, unit: "g", pct: 73, color: "#55CDFC" },
+  { label: "Fats",    current: 58,  target: 70,  unit: "g", pct: 83, color: "#F59E0B" },
 ];
 
 const MEALS: MealEntry[] = [
-  { emoji: "🥘", name: "Masala Dosa + Chutney",        mealType: "Breakfast", kcal: 380 },
-  { emoji: "🍛", name: "Paneer Butter Masala + Roti",  mealType: "Lunch",     kcal: 470 },
+  { emoji: "🥘", name: "Masala Dosa + Chutney",       mealType: "Breakfast", kcal: 380 },
+  { emoji: "🍛", name: "Paneer Butter Masala + Roti", mealType: "Lunch",     kcal: 470 },
 ];
 
-function formatDate(): string {
-  return new Date().toLocaleDateString("en-IN", {
-    weekday: "long",
-    day: "numeric",
-    month: "short",
-  });
+// ─── Header Avatar (light-theme) ─────────────────────────────────────────────
+function HeaderAvatar() {
+  return (
+    <View style={styles.avatarWrap}>
+      <User size={20} color={SKY_BLUE} strokeWidth={2} />
+    </View>
+  );
 }
 
-// ─── Macro Card ──────────────────────────────────────────────────────────────
+// ─── Macro Card (white surface) ──────────────────────────────────────────────
 function MacroCard({ label, current, target, unit, pct, color }: MacroData) {
   return (
-    <View style={[styles.macroCard, { borderColor: alpha(color, 50) }]}>
-      <View style={[styles.macroColorDot, { backgroundColor: color }]} />
-      <Text style={[styles.macroLabel, { color }]}>{label}</Text>
-      <View style={styles.macroBarTrack}>
-        <View
-          style={[styles.macroBarFill, { width: `${pct}%`, backgroundColor: color }]}
-        />
+    <View style={styles.macroCard}>
+      <View style={[styles.macroIcon, { backgroundColor: `${color}18` }]}>
+        <Text style={[styles.macroIconLetter, { color }]}>{label[0]}</Text>
       </View>
-      <Text style={styles.macroDetail}>
+      <Text style={styles.macroLabel}>{label}</Text>
+      <Text style={styles.macroNumber}>
         {current}
-        {unit} / {target}
-        {unit}
+        <Text style={styles.macroUnit}> {unit}</Text>
       </Text>
+      <Text style={styles.macroTarget}>/ {target} {unit}</Text>
+      <View style={styles.macroTrack}>
+        <View style={[styles.macroFill, { width: `${pct}%`, backgroundColor: color }]} />
+      </View>
+      <Text style={[styles.macroPct, { color }]}>{pct}%</Text>
     </View>
   );
 }
@@ -92,7 +108,7 @@ function MealRow({ emoji, name, mealType, kcal }: MealEntry) {
   return (
     <View style={styles.mealRow}>
       <View style={styles.mealEmojiBox}>
-        <Text style={styles.mealEmojiText}>{emoji}</Text>
+        <Text style={styles.mealEmoji}>{emoji}</Text>
       </View>
       <View style={styles.mealInfo}>
         <Text style={styles.mealName} numberOfLines={1}>{name}</Text>
@@ -106,112 +122,199 @@ function MealRow({ emoji, name, mealType, kcal }: MealEntry) {
   );
 }
 
+// ─── Tab item ────────────────────────────────────────────────────────────────
+function TabItem({
+  icon,
+  label,
+  active = false,
+}: {
+  icon: (color: string) => React.ReactNode;
+  label: string;
+  active?: boolean;
+}) {
+  const color = active ? SKY_BLUE : SLATE_GRAY;
+  return (
+    <TouchableOpacity style={styles.tabItem} activeOpacity={0.7}>
+      {icon(color)}
+      <Text style={[styles.tabLabel, { color }]}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+// ─── Premium Tab Bar ─────────────────────────────────────────────────────────
+function PremiumTabBar({ onScan }: { onScan: () => void }) {
+  const insets   = useSafeAreaInsets();
+  const btnScale = useRef(new Animated.Value(1)).current;
+
+  const onPressIn  = () =>
+    Animated.spring(btnScale, { toValue: 0.90, useNativeDriver: true, speed: 60, bounciness: 6 }).start();
+  const onPressOut = () =>
+    Animated.spring(btnScale, { toValue: 1,    useNativeDriver: true, speed: 30, bounciness: 14 }).start();
+
+  return (
+    <View style={[styles.tabBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+      <TabItem
+        icon={(c) => <Home size={22} color={c} strokeWidth={2} />}
+        label="Home"
+        active
+      />
+      <TabItem
+        icon={(c) => <BookOpen size={22} color={c} strokeWidth={2} />}
+        label="Diary"
+      />
+
+      {/* Central floating scan button */}
+      <View style={styles.tabCenterSlot}>
+        <Animated.View style={{ transform: [{ scale: btnScale }] }}>
+          <TouchableOpacity
+            style={styles.scanBtn}
+            activeOpacity={1}
+            onPressIn={onPressIn}
+            onPressOut={onPressOut}
+            onPress={onScan}
+          >
+            <Camera size={26} color="#FFFFFF" strokeWidth={2} />
+          </TouchableOpacity>
+        </Animated.View>
+      </View>
+
+      <TabItem
+        icon={(c) => <BarChart2 size={22} color={c} strokeWidth={2} />}
+        label="Progress"
+      />
+      <TabItem
+        icon={(c) => <MoreHorizontal size={22} color={c} strokeWidth={2} />}
+        label="More"
+      />
+    </View>
+  );
+}
+
 // ─── Screen ──────────────────────────────────────────────────────────────────
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const fabScale = useRef(new Animated.Value(1)).current;
-
-  const onFabPressIn = () =>
-    Animated.spring(fabScale, {
-      toValue: 0.94,
-      useNativeDriver: true,
-      speed: 60,
-      bounciness: 8,
-    }).start();
-
-  const onFabPressOut = () =>
-    Animated.spring(fabScale, {
-      toValue: 1,
-      useNativeDriver: true,
-      speed: 30,
-      bounciness: 14,
-    }).start();
-
-  const fabBottom = insets.bottom + 20;
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <ScrollView
-        contentContainerStyle={[
-          styles.scroll,
-          { paddingBottom: FAB_HEIGHT + fabBottom + 20 },
-        ]}
+        contentContainerStyle={[styles.scroll, { paddingBottom: 20 }]}
+        style={styles.scrollFlex}
         showsVerticalScrollIndicator={false}
       >
-        {/* ── Header ─────────────────────────────────────────────────── */}
+        {/* ── Header ──────────────────────────────────────────────────── */}
         <View style={styles.header}>
           <View style={styles.headerLeft}>
-            <View style={styles.avatar}>
-              <User size={22} color={Colors.emerald} strokeWidth={2} />
-            </View>
+            <HeaderAvatar />
             <View>
               <Text style={styles.greeting}>Namaste, Ravi! 🙏</Text>
-              <Text style={styles.greetingDate}>{formatDate()}</Text>
+              <Text style={styles.headerSub}>Swasth Profile</Text>
             </View>
           </View>
-
           <TouchableOpacity style={styles.historyBadge} activeOpacity={0.75}>
-            <History size={13} color={Colors.teal} strokeWidth={2} />
+            <History size={13} color={SKY_BLUE} strokeWidth={2} />
             <Text style={styles.historyText}>Scan History</Text>
           </TouchableOpacity>
         </View>
 
-        {/* ── Calorie Ring Card ─────────────────────────────────────── */}
-        <View style={styles.ringCard}>
-          <Text style={styles.ringCardLabel}>TODAY'S CALORIE BUDGET</Text>
+        {/* ── Premium Profile Card ─────────────────────────────────────── */}
+        <View style={styles.cardRow}>
+          <PremiumProfileCard
+            name="Ravi Kumar"
+            avatarInitials="RK"
+            streak={21}
+            targetCalories={2300}
+            consumedCalories={1610}
+            tier="Swasth Pro"
+            weightKg={72}
+            protein={140}
+            carbs={210}
+            fats={65}
+          />
+        </View>
 
-          <View style={styles.ringWrapper}>
-            <Svg
-              width={RING_SIZE}
-              height={RING_SIZE}
-              viewBox={`0 0 ${RING_SIZE} ${RING_SIZE}`}
-            >
-              {/* Background track */}
-              <Circle
-                cx={RING_CENTER}
-                cy={RING_CENTER}
-                r={RING_RADIUS}
-                stroke={Colors.slate100}
-                strokeWidth={STROKE_WIDTH}
-                fill="none"
-              />
-              {/* Remaining arc — rotated so arc begins at 12 o'clock */}
-              <G transform={`rotate(-90, ${RING_CENTER}, ${RING_CENTER})`}>
+        {/* ── Hero Gradient Calorie Card ───────────────────────────────── */}
+        <View style={styles.heroCard}>
+          {/* Sky→Azure gradient fill */}
+          <Svg
+            width="100%"
+            height="100%"
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            style={StyleSheet.absoluteFillObject}
+          >
+            <Defs>
+              <LinearGradient id="heroGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                <Stop offset="0%"   stopColor="#55CDFC" stopOpacity="1" />
+                <Stop offset="100%" stopColor="#38BDF8" stopOpacity="1" />
+              </LinearGradient>
+            </Defs>
+            <Rect x={0} y={0} width={100} height={100} fill="url(#heroGrad)" />
+          </Svg>
+
+          {/* Top row: metrics left, ring right */}
+          <View style={styles.heroBody}>
+            <View style={styles.heroLeft}>
+              <View style={styles.heroLabelRow}>
+                <Flame size={14} color="rgba(255,255,255,0.85)" strokeWidth={2} />
+                <Text style={styles.heroLabelText}>Calories Left</Text>
+              </View>
+              <Text style={styles.heroNumber}>{REMAINING_KCAL.toLocaleString()}</Text>
+              <Text style={styles.heroKcalUnit}>kcal left</Text>
+            </View>
+
+            <View style={styles.heroRingWrap}>
+              <Svg width={RING_SIZE} height={RING_SIZE} viewBox={`0 0 ${RING_SIZE} ${RING_SIZE}`}>
+                {/* Track */}
                 <Circle
-                  cx={RING_CENTER}
-                  cy={RING_CENTER}
-                  r={RING_RADIUS}
-                  stroke={EMERALD_LEAF}
+                  cx={RING_CENTER} cy={RING_CENTER} r={RING_RADIUS}
+                  stroke="rgba(255,255,255,0.25)"
                   strokeWidth={STROKE_WIDTH}
                   fill="none"
-                  strokeDasharray={String(CIRCUMFERENCE)}
-                  strokeDashoffset={RING_DASH_OFFSET}
-                  strokeLinecap="round"
                 />
-              </G>
-            </Svg>
-
-            {/* Centered numeric overlay */}
-            <View style={styles.ringOverlay}>
-              <Text style={styles.ringNumber}>1,450</Text>
-              <Text style={styles.ringSubLabel}>kcal remaining</Text>
+                {/* Progress arc — starts at 12 o'clock */}
+                <G transform={`rotate(-90, ${RING_CENTER}, ${RING_CENTER})`}>
+                  <Circle
+                    cx={RING_CENTER} cy={RING_CENTER} r={RING_RADIUS}
+                    stroke="#FFFFFF"
+                    strokeWidth={STROKE_WIDTH}
+                    fill="none"
+                    strokeDasharray={String(CIRCUMFERENCE)}
+                    strokeDashoffset={RING_OFFSET}
+                    strokeLinecap="round"
+                  />
+                </G>
+              </Svg>
+              <View style={styles.heroRingOverlay}>
+                <Text style={styles.heroRingPct}>{PCT_DISPLAY}%</Text>
+                <Text style={styles.heroRingGoal}>of daily goal</Text>
+              </View>
             </View>
           </View>
 
-          <Text style={styles.ringProgress}>
-            {CONSUMED_KCAL.toLocaleString()} / {TARGET_KCAL.toLocaleString()} kcal consumed
-          </Text>
+          {/* Progress pill — bleeds to card edges */}
+          <TouchableOpacity style={styles.heroPill} activeOpacity={0.85}>
+            <Text style={styles.heroPillText}>
+              {CONSUMED_KCAL.toLocaleString()} / {TARGET_KCAL.toLocaleString()} kcal consumed
+            </Text>
+            <ChevronRight size={14} color="rgba(255,255,255,0.75)" strokeWidth={2.5} />
+          </TouchableOpacity>
         </View>
 
-        {/* ── Macro Row ─────────────────────────────────────────────── */}
+        {/* ── Macros ──────────────────────────────────────────────────── */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Macros</Text>
+          <TouchableOpacity>
+            <Text style={styles.sectionLink}>View Details ›</Text>
+          </TouchableOpacity>
+        </View>
         <View style={styles.macroRow}>
           {MACROS.map((m) => (
             <MacroCard key={m.label} {...m} />
           ))}
         </View>
 
-        {/* ── Meal Log ──────────────────────────────────────────────── */}
+        {/* ── Meal Log ────────────────────────────────────────────────── */}
         <View style={styles.mealCard}>
           <View style={styles.mealCardHeader}>
             <Text style={styles.mealCardTitle}>Today's Swasth Scans</Text>
@@ -219,7 +322,6 @@ export default function HomeScreen() {
               <Text style={styles.mealCountText}>{MEALS.length}</Text>
             </View>
           </View>
-
           {MEALS.map((meal, i) => (
             <React.Fragment key={meal.name}>
               <MealRow {...meal} />
@@ -229,40 +331,32 @@ export default function HomeScreen() {
         </View>
       </ScrollView>
 
-      {/* ── Floating Action Button ────────────────────────────────── */}
-      <Animated.View
-        style={[
-          styles.fabWrap,
-          { bottom: fabBottom, transform: [{ scale: fabScale }] },
-        ]}
-      >
-        <TouchableOpacity
-          style={styles.fab}
-          activeOpacity={1}
-          onPressIn={onFabPressIn}
-          onPressOut={onFabPressOut}
-          onPress={() => router.push("/camera")}
-        >
-          <Text style={styles.fabText}>📷  SCAN NEW THALI</Text>
-        </TouchableOpacity>
-      </Animated.View>
+      <PremiumTabBar onScan={() => router.push("/camera")} />
     </View>
   );
 }
 
+// ─── Shared card shadow ───────────────────────────────────────────────────────
+const CARD_SHADOW = {
+  shadowColor: SLATE_GRAY,
+  shadowOffset: { width: 0, height: 4 },
+  shadowOpacity: 0.10,
+  shadowRadius: 12,
+  elevation: 4,
+} as const;
+
 // ─── Styles ──────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: Colors.backdrop,
-  },
+  root:       { flex: 1, backgroundColor: OFF_WHITE },
+  scrollFlex: { flex: 1 },
   scroll: {
     paddingHorizontal: 20,
     paddingTop: 16,
-    gap: 20,
+    gap: 16,
   },
+  cardRow: { alignItems: "center" },
 
-  // Header
+  // ── Header ─────────────────────────────────────────────────────────────────
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -273,34 +367,35 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
   },
-  avatar: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    backgroundColor: alpha(Colors.emerald, 22),
-    borderWidth: 1.5,
-    borderColor: alpha(Colors.emerald, 60),
+  avatarWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: `${SKY_BLUE}18`,
+    borderWidth: 1.5,
+    borderColor: `${SKY_BLUE}50`,
   },
   greeting: {
     fontSize: 17,
     fontWeight: "700",
-    color: Colors.slate900,
+    color: CHARCOAL,
     letterSpacing: -0.3,
   },
-  greetingDate: {
+  headerSub: {
     fontSize: 12,
-    color: Colors.slate400,
-    marginTop: 2,
+    color: SLATE_GRAY,
+    fontWeight: "500",
+    marginTop: 1,
   },
   historyBadge: {
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
-    backgroundColor: alpha(Colors.teal, 18),
+    backgroundColor: `${SKY_BLUE}14`,
     borderWidth: 1,
-    borderColor: alpha(Colors.teal, 55),
+    borderColor: `${SKY_BLUE}40`,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 20,
@@ -308,118 +403,187 @@ const styles = StyleSheet.create({
   historyText: {
     fontSize: 12,
     fontWeight: "600",
-    color: Colors.teal,
+    color: SKY_BLUE,
   },
 
-  // Calorie Ring Card
-  ringCard: {
-    backgroundColor: Colors.white,
+  // ── Hero Gradient Card ─────────────────────────────────────────────────────
+  heroCard: {
     borderRadius: 24,
-    borderWidth: 1,
-    borderColor: Colors.zinc,
-    alignItems: "center",
-    paddingVertical: 24,
+    overflow: "hidden",
     paddingHorizontal: 20,
-    gap: 12,
-    shadowColor: Colors.slate900,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    elevation: 3,
+    paddingTop: 20,
+    shadowColor: "#38BDF8",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 10,
   },
-  ringCardLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: Colors.slate400,
-    letterSpacing: 1.4,
-    textTransform: "uppercase",
+  heroBody: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingBottom: 16,
   },
-  ringWrapper: {
+  heroLeft: {
+    flex: 1,
+    gap: 2,
+  },
+  heroLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 6,
+  },
+  heroLabelText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "rgba(255,255,255,0.85)",
+  },
+  heroNumber: {
+    fontSize: 52,
+    fontWeight: "800",
+    color: "#FFFFFF",
+    letterSpacing: -2.5,
+    lineHeight: 56,
+  },
+  heroKcalUnit: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: "rgba(255,255,255,0.75)",
+    marginTop: 2,
+  },
+  heroRingWrap: {
     width: RING_SIZE,
     height: RING_SIZE,
     alignItems: "center",
     justifyContent: "center",
   },
-  ringOverlay: {
+  heroRingOverlay: {
     position: "absolute",
     alignItems: "center",
+    justifyContent: "center",
   },
-  ringNumber: {
-    fontSize: 38,
+  heroRingPct: {
+    fontSize: 22,
     fontWeight: "800",
-    color: EMERALD_LEAF,
-    letterSpacing: -1.5,
+    color: "#FFFFFF",
+    letterSpacing: -0.5,
   },
-  ringSubLabel: {
-    fontSize: 12,
+  heroRingGoal: {
+    fontSize: 10,
     fontWeight: "500",
-    color: Colors.slate600,
-    marginTop: 2,
+    color: "rgba(255,255,255,0.80)",
+    textAlign: "center",
+    marginTop: 1,
   },
-  ringProgress: {
+  // Negative horizontal margins bleed through padding to reach card edges;
+  // overflow:hidden on heroCard clips corners cleanly.
+  heroPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "rgba(255,255,255,0.22)",
+    marginHorizontal: -20,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+  },
+  heroPillText: {
     fontSize: 13,
-    color: Colors.slate400,
-    fontWeight: "500",
+    fontWeight: "600",
+    color: "rgba(255,255,255,0.90)",
   },
 
-  // Macro Row
+  // ── Section header ─────────────────────────────────────────────────────────
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: -4,
+  },
+  sectionTitle: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: CHARCOAL,
+    letterSpacing: -0.3,
+  },
+  sectionLink: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: SKY_BLUE,
+  },
+
+  // ── Macro Row — white surface cards ───────────────────────────────────────
   macroRow: {
     flexDirection: "row",
     gap: 10,
   },
   macroCard: {
     flex: 1,
-    backgroundColor: Colors.white,
-    borderRadius: 16,
-    borderWidth: 1,
-    padding: 12,
-    gap: 6,
-    shadowColor: Colors.slate900,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    elevation: 2,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 24,
+    padding: 14,
+    gap: 4,
+    ...CARD_SHADOW,
   },
-  macroColorDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+  macroIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 2,
+  },
+  macroIconLetter: {
+    fontSize: 13,
+    fontWeight: "800",
   },
   macroLabel: {
     fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 0.1,
+    fontWeight: "600",
+    color: SLATE_GRAY,
   },
-  macroBarTrack: {
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: Colors.slate100,
-    overflow: "hidden",
+  macroNumber: {
+    fontSize: 22,
+    fontWeight: "800",
+    color: CHARCOAL,
+    letterSpacing: -0.5,
+    lineHeight: 26,
   },
-  macroBarFill: {
-    height: "100%",
-    borderRadius: 3,
-  },
-  macroDetail: {
-    fontSize: 10,
-    color: Colors.slate400,
+  macroUnit: {
+    fontSize: 12,
     fontWeight: "500",
+    color: SLATE_GRAY,
+  },
+  macroTarget: {
+    fontSize: 11,
+    fontWeight: "500",
+    color: SLATE_GRAY,
+  },
+  macroTrack: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#F1F5F9",
+    overflow: "hidden",
+    marginTop: 2,
+  },
+  macroFill: {
+    height: "100%",
+    borderRadius: 2,
+  },
+  macroPct: {
+    fontSize: 11,
+    fontWeight: "700",
+    textAlign: "right",
   },
 
-  // Meal Card
+  // ── Meal Card — white surface ──────────────────────────────────────────────
   mealCard: {
-    backgroundColor: Colors.white,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: Colors.zinc,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 24,
     paddingVertical: 18,
     paddingHorizontal: 16,
-    shadowColor: Colors.slate900,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
     gap: 4,
+    ...CARD_SHADOW,
   },
   mealCardHeader: {
     flexDirection: "row",
@@ -430,21 +594,21 @@ const styles = StyleSheet.create({
   mealCardTitle: {
     fontSize: 15,
     fontWeight: "700",
-    color: Colors.slate900,
+    color: CHARCOAL,
     letterSpacing: -0.2,
   },
   mealCountBadge: {
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: alpha(Colors.emerald, 22),
+    backgroundColor: `${SKY_BLUE}20`,
     alignItems: "center",
     justifyContent: "center",
   },
   mealCountText: {
     fontSize: 12,
     fontWeight: "700",
-    color: Colors.emerald,
+    color: SKY_BLUE,
   },
   mealRow: {
     flexDirection: "row",
@@ -455,27 +619,22 @@ const styles = StyleSheet.create({
   mealEmojiBox: {
     width: 46,
     height: 46,
-    borderRadius: 12,
-    backgroundColor: Colors.slate100,
+    borderRadius: 14,
+    backgroundColor: OFF_WHITE,
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
   },
-  mealEmojiText: {
-    fontSize: 22,
-  },
-  mealInfo: {
-    flex: 1,
-    gap: 3,
-  },
+  mealEmoji:    { fontSize: 22 },
+  mealInfo:     { flex: 1, gap: 3 },
   mealName: {
     fontSize: 14,
     fontWeight: "600",
-    color: Colors.slate900,
+    color: CHARCOAL,
   },
   mealType: {
     fontSize: 12,
-    color: Colors.slate400,
+    color: SLATE_GRAY,
   },
   mealKcalCol: {
     alignItems: "flex-end",
@@ -484,42 +643,64 @@ const styles = StyleSheet.create({
   mealKcal: {
     fontSize: 18,
     fontWeight: "700",
-    color: EMERALD_LEAF,
+    color: "#059669",
     letterSpacing: -0.5,
   },
   mealKcalUnit: {
     fontSize: 10,
-    color: Colors.slate400,
     fontWeight: "500",
+    color: SLATE_GRAY,
   },
   mealDivider: {
     height: 1,
-    backgroundColor: Colors.slate100,
+    backgroundColor: "#F1F5F9",
     marginLeft: 58,
   },
 
-  // FAB
-  fabWrap: {
-    position: "absolute",
-    alignSelf: "center",
+  // ── Premium Tab Bar ────────────────────────────────────────────────────────
+  tabBar: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    backgroundColor: "#FFFFFF",
+    borderTopWidth: 0.5,
+    borderTopColor: "#E2E8F0",
+    paddingTop: 10,
+    paddingHorizontal: 4,
+    // Lift bar above scroll content on iOS
+    shadowColor: "#64748B",
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 8,
   },
-  fab: {
-    height: FAB_HEIGHT,
-    paddingHorizontal: 36,
-    borderRadius: FAB_HEIGHT / 2,
+  tabItem: {
+    flex: 1,
+    alignItems: "center",
+    gap: 3,
+    paddingBottom: 4,
+  },
+  tabLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+    letterSpacing: 0.1,
+  },
+  tabCenterSlot: {
+    flex: 1,
+    alignItems: "center",
+  },
+  // Floats SCAN_BTN_SIZE px circle upward so half sits above the bar edge
+  scanBtn: {
+    width: SCAN_BTN_SIZE,
+    height: SCAN_BTN_SIZE,
+    borderRadius: SCAN_BTN_SIZE / 2,
+    backgroundColor: SKY_BLUE,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: Colors.emerald,
-    shadowColor: Colors.emerald,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.48,
-    shadowRadius: 18,
-    elevation: 14,
-  },
-  fabText: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: Colors.white,
-    letterSpacing: 0.8,
+    marginTop: -(SCAN_BTN_SIZE / 2),
+    shadowColor: SKY_BLUE,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.50,
+    shadowRadius: 14,
+    elevation: 12,
   },
 });

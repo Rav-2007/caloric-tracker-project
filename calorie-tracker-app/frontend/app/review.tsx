@@ -25,6 +25,7 @@ import { Colors, alpha } from "@/constants/colors";
 
 // ─── Design tokens ───────────────────────────────────────────────────────────
 const EMERALD_LEAF = "#059669";
+const ICE          = "#55CDFC";
 
 // Slider range & snap
 const SLIDER_MIN  = 50;
@@ -135,7 +136,7 @@ function GramSlider({ value, color, onChange }: SliderProps) {
         style={{
           flex: Math.max(1 - pct, 0.001),
           height: 6,
-          backgroundColor: Colors.slate100,
+          backgroundColor: "#E2E8F0",
           borderRadius: 3,
         }}
       />
@@ -192,13 +193,13 @@ function ItemAdjustCard({ item, grams, accent, onGramsChange }: ItemCardProps) {
         <View
           style={[
             styles.sourceBadge,
-            { backgroundColor: alpha(isIcmr ? Colors.emerald : Colors.slate400, 20) },
+            { backgroundColor: isIcmr ? alpha(Colors.emerald, 20) : "rgba(0,0,0,0.04)" },
           ]}
         >
           <Text
             style={[
               styles.sourceText,
-              { color: isIcmr ? Colors.emerald : Colors.slate400 },
+              { color: isIcmr ? Colors.emerald : "#94A3B8" },
             ]}
           >
             {isIcmr ? "ICMR-NIN" : "est."}
@@ -286,7 +287,7 @@ export default function ReviewScreen() {
           onPress={() => router.back()}
           activeOpacity={0.75}
         >
-          <ArrowLeft size={20} color={Colors.slate900} strokeWidth={2} />
+          <ArrowLeft size={20} color="#0F172A" strokeWidth={2} />
         </TouchableOpacity>
         <Text style={styles.topTitle}>Adjust Portions</Text>
         {/* Spacer keeps title centred */}
@@ -310,7 +311,7 @@ export default function ReviewScreen() {
             />
           ) : (
             <View style={[styles.thumbnail, styles.thumbnailFallback]}>
-              <Zap size={24} color={Colors.slate400} />
+              <Zap size={24} color="#94A3B8" />
             </View>
           )}
           <View style={styles.summaryInfo}>
@@ -366,7 +367,7 @@ export default function ReviewScreen() {
           activeOpacity={0.75}
           onPress={() => router.back()}
         >
-          <RefreshCw size={15} color={Colors.emerald} strokeWidth={2} />
+          <RefreshCw size={15} color={ICE} strokeWidth={2} />
           <Text style={styles.outlineBtnText}>Retake Scan</Text>
         </TouchableOpacity>
       </View>
@@ -376,21 +377,22 @@ export default function ReviewScreen() {
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: Colors.backdrop },
+  root: { flex: 1, backgroundColor: "#F8FAFC" },
 
   // Top bar
   topBar: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: 16, paddingVertical: 14,
-    borderBottomWidth: 1, borderBottomColor: Colors.zinc,
+    backgroundColor: "#FFFFFF",
+    borderBottomWidth: 1, borderBottomColor: "#E2E8F0",
   },
   backBtn: {
     width: 38, height: 38, borderRadius: 12,
-    backgroundColor: Colors.slate100,
+    backgroundColor: "rgba(85,205,252,0.10)",
     alignItems: "center", justifyContent: "center",
   },
   topTitle: {
-    fontSize: 17, fontWeight: "700", color: Colors.slate900, letterSpacing: -0.3,
+    fontSize: 17, fontWeight: "700", color: "#0F172A", letterSpacing: -0.3,
   },
 
   // Scroll
@@ -399,38 +401,38 @@ const styles = StyleSheet.create({
   // Summary card
   summaryCard: {
     flexDirection: "row", alignItems: "center", gap: 16,
-    backgroundColor: Colors.white,
-    borderRadius: 22, borderWidth: 1.5, borderColor: alpha(EMERALD_LEAF, 55),
+    backgroundColor: "#FFFFFF",
+    borderRadius: 22, borderWidth: 1, borderColor: "#E2E8F0",
     padding: 16,
-    shadowColor: Colors.slate900,
-    shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.07, shadowRadius: 10, elevation: 3,
+    shadowColor: "#64748B", shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08, shadowRadius: 12, elevation: 3,
   },
   thumbnail: { width: 82, height: 82, borderRadius: 14, flexShrink: 0 },
   thumbnailFallback: {
-    backgroundColor: Colors.slate100, alignItems: "center", justifyContent: "center",
+    backgroundColor: "#F1F5F9", alignItems: "center", justifyContent: "center",
   },
   summaryInfo: { flex: 1, gap: 4 },
   summaryLabel: {
-    fontSize: 10, fontWeight: "700", color: Colors.slate400,
+    fontSize: 10, fontWeight: "700", color: "#64748B",
     letterSpacing: 1.4, textTransform: "uppercase",
   },
   summaryCalories: {
-    fontSize: 44, fontWeight: "800", color: EMERALD_LEAF, letterSpacing: -2, lineHeight: 50,
+    fontSize: 44, fontWeight: "800", color: "#0F172A", letterSpacing: -2, lineHeight: 50,
   },
-  summaryHint: { fontSize: 12, color: Colors.slate400, fontWeight: "500" },
+  summaryHint: { fontSize: 12, color: "#64748B", fontWeight: "500" },
 
   // Section label
   sectionLabel: {
-    fontSize: 10, fontWeight: "700", color: Colors.slate400,
+    fontSize: 10, fontWeight: "700", color: "#64748B",
     letterSpacing: 1.4, textTransform: "uppercase", paddingHorizontal: 2,
   },
 
-  // Item card
+  // Item card — white surface
   itemCard: {
-    backgroundColor: Colors.white, borderRadius: 20, borderWidth: 1,
-    padding: 18, gap: 12,
-    shadowColor: Colors.slate900,
-    shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2,
+    backgroundColor: "#FFFFFF", borderRadius: 20, borderWidth: 1,
+    borderColor: "#E2E8F0", padding: 18, gap: 12,
+    shadowColor: "#64748B", shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08, shadowRadius: 12, elevation: 3,
   },
   itemHeader: {
     flexDirection: "row", alignItems: "flex-start",
@@ -438,7 +440,7 @@ const styles = StyleSheet.create({
   },
   itemName: {
     flex: 1, fontSize: 15, fontWeight: "700",
-    color: Colors.slate900, letterSpacing: -0.2,
+    color: "#0F172A", letterSpacing: -0.2,
   },
   sourceBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, flexShrink: 0 },
   sourceText: { fontSize: 10, fontWeight: "700", letterSpacing: 0.4 },
@@ -447,14 +449,14 @@ const styles = StyleSheet.create({
   weightRow: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
   },
-  weightLabel: { fontSize: 13, color: Colors.slate600, fontWeight: "500" },
+  weightLabel: { fontSize: 13, color: "#64748B", fontWeight: "500" },
   weightBadge: {
     flexDirection: "row", alignItems: "baseline", gap: 2,
     paddingHorizontal: 10, paddingVertical: 4,
-    borderRadius: 10, borderWidth: 1.5, backgroundColor: Colors.slate50,
+    borderRadius: 10, borderWidth: 1.5, backgroundColor: "#F8FAFC",
   },
   weightValue: { fontSize: 22, fontWeight: "800", letterSpacing: -0.5 },
-  weightUnit:  { fontSize: 12, color: Colors.slate400, fontWeight: "600" },
+  weightUnit:  { fontSize: 12, color: "#64748B", fontWeight: "600" },
 
   // Slider
   sliderOuter: {
@@ -462,12 +464,12 @@ const styles = StyleSheet.create({
   },
   sliderThumb: {
     width: 24, height: 24, borderRadius: 12,
-    borderWidth: 2.5, borderColor: Colors.white, flexShrink: 0,
-    shadowColor: Colors.slate900,
-    shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.28, shadowRadius: 4, elevation: 5,
+    borderWidth: 2.5, borderColor: "#FFFFFF", flexShrink: 0,
+    shadowColor: "#64748B",
+    shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4, elevation: 5,
   },
   rangeRow: { flexDirection: "row", justifyContent: "space-between", marginTop: -6 },
-  rangeText: { fontSize: 10, color: Colors.slate400, fontWeight: "500" },
+  rangeText: { fontSize: 10, color: "#94A3B8", fontWeight: "500" },
 
   // Macro pills
   pillRow: { flexDirection: "row", gap: 8 },
@@ -484,23 +486,23 @@ const styles = StyleSheet.create({
   actionBar: {
     position: "absolute", bottom: 0, left: 0, right: 0,
     paddingTop: 14, paddingHorizontal: 20, gap: 10,
-    backgroundColor: Colors.backdrop,
-    borderTopWidth: 1, borderTopColor: Colors.zinc,
-    shadowColor: Colors.slate900,
-    shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.07, shadowRadius: 12, elevation: 8,
+    backgroundColor: "#FFFFFF",
+    borderTopWidth: 1, borderTopColor: "#E2E8F0",
+    shadowColor: "#64748B", shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.06, shadowRadius: 8, elevation: 8,
   },
   primaryBtn: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10,
-    backgroundColor: Colors.emerald, paddingVertical: 16, borderRadius: 16,
-    shadowColor: Colors.emerald, shadowOffset: { width: 0, height: 6 },
+    backgroundColor: ICE, paddingVertical: 16, borderRadius: 16,
+    shadowColor: ICE, shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.38, shadowRadius: 12, elevation: 8,
   },
   primaryBtnText: { color: Colors.white, fontSize: 16, fontWeight: "700", letterSpacing: 0.2 },
   outlineBtn: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
     paddingVertical: 13, borderRadius: 16,
-    borderWidth: 1.5, borderColor: Colors.emerald,
-    backgroundColor: alpha(Colors.emerald, 12),
+    borderWidth: 1.5, borderColor: ICE,
+    backgroundColor: "rgba(85,205,252,0.10)",
   },
-  outlineBtnText: { color: Colors.emerald, fontSize: 15, fontWeight: "600" },
+  outlineBtnText: { color: ICE, fontSize: 15, fontWeight: "600" },
 });

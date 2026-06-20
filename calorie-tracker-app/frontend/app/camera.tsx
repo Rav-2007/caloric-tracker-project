@@ -60,6 +60,7 @@ const CLIP_RADIUS      = CLIP_DIAMETER / 2;
 
 // Monospaced font for clinical loading text
 const MONO = Platform.OS === "ios" ? "Courier New" : "monospace";
+const ICE  = "#55CDFC";
 
 const LOADING_MESSAGES = [
   "Consulting ICMR-NIN database...",
@@ -135,12 +136,12 @@ function ThaliGuideRing({ pulseScale, pulseOpacity }: {
           strokeWidth={GUIDE_STROKE}
           fill="none"
         />
-        {/* Dashed emerald guide */}
+        {/* Dashed sky-blue guide */}
         <Circle
           cx={GUIDE_CENTER}
           cy={GUIDE_CENTER}
           r={GUIDE_RADIUS_SVG}
-          stroke="rgba(16,185,129,0.82)"
+          stroke="#55CDFC"
           strokeWidth={GUIDE_STROKE}
           fill="none"
           strokeDasharray="14 9"
@@ -197,8 +198,8 @@ function PermissionGate({ onRequest }: { onRequest: () => void }) {
   const router = useRouter();
   return (
     <View style={styles.permRoot}>
-      <StatusBar style="light" />
-      <ShieldAlert size={48} color={Colors.emerald} strokeWidth={1.5} />
+      <StatusBar style="dark" />
+      <ShieldAlert size={48} color={ICE} strokeWidth={1.5} />
       <Text style={styles.permTitle}>Camera access needed</Text>
       <Text style={styles.permBody}>
         We need your camera to photograph your meal. No images are stored on device.
@@ -234,7 +235,7 @@ function LoadingOverlay({ msgIndex }: { msgIndex: number }) {
       <View style={styles.loadingCard}>
         {/* Glowing indicator ring */}
         <View style={styles.glowRing}>
-          <ActivityIndicator size="large" color={Colors.mint} />
+          <ActivityIndicator size="large" color={ICE} />
         </View>
 
         {/* Status label */}
@@ -260,7 +261,7 @@ function LoadingOverlay({ msgIndex }: { msgIndex: number }) {
 
         {/* Powered-by footer */}
         <View style={styles.poweredByRow}>
-          <Zap size={11} color={Colors.teal} />
+          <Zap size={11} color={ICE} />
           <Text style={styles.poweredByText}>Gemini 2.5 Flash Vision</Text>
         </View>
       </View>
@@ -330,7 +331,7 @@ function FoodItemCard({ item, index }: { item: FoodItem; index: number }) {
           <Text style={styles.foodDot}>·</Text>
           <Text style={styles.foodKcal}>{item.calories} kcal</Text>
           <Text style={styles.foodDot}>·</Text>
-          <Text style={[styles.foodSource, { color: isVerified ? Colors.emerald : Colors.slate400 }]}>
+          <Text style={[styles.foodSource, { color: isVerified ? Colors.emerald : "#94A3B8" }]}>
             {isVerified ? "ICMR-NIN" : "est."}
           </Text>
         </View>
@@ -376,7 +377,7 @@ function ResultsDashboard({ photoUri, result, onRetake }: ResultsDashboardProps)
               {result.food_items.length} item{result.food_items.length !== 1 ? "s" : ""} identified
             </Text>
             <View style={styles.avgRow}>
-              <CheckCircle2 size={12} color={Colors.emerald} strokeWidth={2.5} />
+              <CheckCircle2 size={12} color={ICE} strokeWidth={2.5} />
               <Text style={styles.avgText}>
                 {avgConf}% avg · {icmrCount}/{result.food_items.length} ICMR-NIN
               </Text>
@@ -387,7 +388,7 @@ function ResultsDashboard({ photoUri, result, onRetake }: ResultsDashboardProps)
         {/* Total Calories */}
         <View style={styles.caloriesCard}>
           <View style={styles.caloriesIconWrap}>
-            <Flame size={24} color={Colors.emerald} strokeWidth={1.75} />
+            <Flame size={24} color={ICE} strokeWidth={1.75} />
           </View>
           <View>
             <Text style={styles.caloriesLabel}>TOTAL CALORIES</Text>
@@ -434,7 +435,7 @@ function ResultsDashboard({ photoUri, result, onRetake }: ResultsDashboardProps)
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.outlineBtn} onPress={onRetake} activeOpacity={0.75}>
-          <RefreshCw size={16} color={Colors.emerald} strokeWidth={2} />
+          <RefreshCw size={16} color={ICE} strokeWidth={2} />
           <Text style={styles.outlineBtnText}>Retake Scan</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -536,16 +537,24 @@ export default function CameraScreen() {
     }
   }, []);
 
-  const takePicture = useCallback(async () => {
+  const processAndAnalyze = useCallback(async () => {
     if (!cameraRef.current || isCapturing) return;
     setIsCapturing(true);
     try {
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.85 });
+      // Step 1 — Capture at full sensor quality (no first-pass JPEG encode).
+      const photo = await cameraRef.current.takePictureAsync({ quality: 1.0 });
       if (!photo) return;
-      const ctx        = ImageManipulator.manipulate(photo.uri);
-      ctx.resize({ width: 1024 });
-      const frame      = await ctx.renderAsync();
-      const compressed = await frame.saveAsync({ compress: 0.82, format: SaveFormat.JPEG });
+
+      // Step 2 — Single-pass resize + encode at verified sweet spot:
+      //   1280 × auto  → preserves 4:3 aspect → 1280 × 960 on most phones
+      //   compress 0.88 → ~420–660 KB JPEG, sharp enough for Gemini dish ID
+      const imageContext  = ImageManipulator.manipulate(photo.uri);
+      const resizedImage  = await imageContext.resize({ width: 1280 }).renderAsync();
+      const compressed    = await resizedImage.saveAsync({
+        compress: 0.88,
+        format: SaveFormat.JPEG,
+      });
+
       setPhotoUri(compressed.uri);
       await sendToBackend(compressed.uri);
     } catch (err: unknown) {
@@ -625,7 +634,7 @@ export default function CameraScreen() {
 
           <TouchableOpacity
             style={[styles.captureBtn, isCapturing && styles.captureBtnBusy]}
-            onPress={takePicture}
+            onPress={processAndAnalyze}
             activeOpacity={0.88}
             disabled={isCapturing}
           >
@@ -665,10 +674,10 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: 6,
     backgroundColor: alpha(Colors.slate800, 180),
     paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20,
-    borderWidth: 1, borderColor: alpha(Colors.emerald, 70),
+    borderWidth: 1, borderColor: "rgba(85,205,252,0.45)",
   },
-  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.emerald },
-  liveText: { color: Colors.mint, fontSize: 11, fontWeight: "700", letterSpacing: 1.2 },
+  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: ICE },
+  liveText: { color: ICE, fontSize: 11, fontWeight: "700", letterSpacing: 1.2 },
 
   // Viewfinder
   finderWrapper: { alignItems: "center", gap: 18 },
@@ -704,8 +713,8 @@ const styles = StyleSheet.create({
     width: CLIP_DIAMETER,
     height: 2,
     borderRadius: 1,
-    backgroundColor: "rgba(16,185,129,0.75)",
-    shadowColor: Colors.emerald,
+    backgroundColor: "rgba(85,205,252,0.75)",
+    shadowColor: ICE,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 1,
     shadowRadius: 8,
@@ -732,12 +741,12 @@ const styles = StyleSheet.create({
   },
   captureBtn: {
     width: 78, height: 78, borderRadius: 39,
-    backgroundColor: Colors.emerald, borderWidth: 3, borderColor: Colors.mint,
+    backgroundColor: ICE, borderWidth: 3, borderColor: "rgba(255,255,255,0.85)",
     alignItems: "center", justifyContent: "center",
-    shadowColor: Colors.emerald, shadowOffset: { width: 0, height: 6 },
+    shadowColor: ICE, shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.65, shadowRadius: 18, elevation: 14,
   },
-  captureBtnBusy: { backgroundColor: Colors.teal, borderColor: Colors.emerald },
+  captureBtnBusy: { backgroundColor: "rgba(85,205,252,0.60)", borderColor: "rgba(85,205,252,0.30)" },
   captureInner: {
     width: 56, height: 56, borderRadius: 28,
     backgroundColor: alpha(Colors.white, 30),
@@ -758,12 +767,12 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(30,41,59,0.96)",
     borderRadius: 26,
     borderWidth: 1,
-    borderColor: alpha(Colors.emerald, 70),
+    borderColor: "rgba(85,205,252,0.45)",
     paddingVertical: 36,
     paddingHorizontal: 28,
     alignItems: "center",
     gap: 18,
-    shadowColor: Colors.emerald,
+    shadowColor: ICE,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.4,
     shadowRadius: 40,
@@ -771,10 +780,10 @@ const styles = StyleSheet.create({
   },
   glowRing: {
     width: 76, height: 76, borderRadius: 38,
-    backgroundColor: alpha(Colors.emerald, 20),
-    borderWidth: 2, borderColor: alpha(Colors.mint, 120),
+    backgroundColor: "rgba(85,205,252,0.12)",
+    borderWidth: 2, borderColor: "rgba(85,205,252,0.65)",
     alignItems: "center", justifyContent: "center",
-    shadowColor: Colors.mint,
+    shadowColor: ICE,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 1,
     shadowRadius: 24,
@@ -783,13 +792,13 @@ const styles = StyleSheet.create({
   loadingStatus: {
     fontSize: 10,
     fontWeight: "700",
-    color: Colors.teal,
+    color: "rgba(85,205,252,0.85)",
     letterSpacing: 2,
     textTransform: "uppercase",
   },
   loadingMsg: {
     fontFamily: MONO,
-    color: Colors.mint,
+    color: "#FFFFFF",
     fontSize: 13.5,
     fontWeight: "400",
     textAlign: "center",
@@ -798,19 +807,19 @@ const styles = StyleSheet.create({
   },
   dotsRow:    { flexDirection: "row", gap: 7 },
   dot:        { width: 7, height: 7, borderRadius: 3.5 },
-  dotActive:  { backgroundColor: Colors.emerald, transform: [{ scale: 1.4 }] },
-  dotInactive: { backgroundColor: alpha(Colors.emerald, 55) },
+  dotActive:  { backgroundColor: ICE, transform: [{ scale: 1.4 }] },
+  dotInactive: { backgroundColor: "rgba(85,205,252,0.30)" },
   poweredByRow: { flexDirection: "row", alignItems: "center", gap: 5 },
-  poweredByText: { fontSize: 11, color: Colors.teal, fontWeight: "500" },
+  poweredByText: { fontSize: 11, color: "rgba(85,205,252,0.80)", fontWeight: "500" },
 
   // ── Network error card ─────────────────────────────────────────────────────
   errorCard: {
-    width: 288, backgroundColor: Colors.slate800,
+    width: 288, backgroundColor: "rgba(21,28,44,0.85)",
     borderRadius: 18, borderWidth: 1, borderColor: alpha(Colors.protein, 65),
     padding: 24, alignItems: "center", gap: 12,
   },
   errorTitle: { color: Colors.white, fontSize: 16, fontWeight: "700" },
-  errorBody:  { color: Colors.slate400, fontSize: 13, textAlign: "center", lineHeight: 20 },
+  errorBody:  { color: "rgba(255,255,255,0.55)", fontSize: 13, textAlign: "center", lineHeight: 20 },
   retryBtn: {
     flexDirection: "row", alignItems: "center", gap: 8,
     backgroundColor: Colors.protein,
@@ -818,77 +827,79 @@ const styles = StyleSheet.create({
   },
   retryBtnText: { color: Colors.white, fontWeight: "700", fontSize: 14 },
 
-  // ── Permission gate ────────────────────────────────────────────────────────
+  // ── Permission gate — light canvas ─────────────────────────────────────────
   permRoot: {
-    flex: 1, backgroundColor: Colors.slate900,
+    flex: 1, backgroundColor: "#F8FAFC",
     alignItems: "center", justifyContent: "center", padding: 36, gap: 16,
   },
-  permTitle: { fontSize: 22, fontWeight: "700", color: Colors.white, textAlign: "center" },
-  permBody:  { fontSize: 14, color: Colors.slate400, textAlign: "center", lineHeight: 22, maxWidth: 280 },
+  permTitle: { fontSize: 22, fontWeight: "700", color: "#0F172A", textAlign: "center" },
+  permBody:  { fontSize: 14, color: "#64748B", textAlign: "center", lineHeight: 22, maxWidth: 280 },
   permBtn: {
-    backgroundColor: Colors.emerald, paddingHorizontal: 32, paddingVertical: 14,
+    backgroundColor: ICE, paddingHorizontal: 32, paddingVertical: 14,
     borderRadius: 14, marginTop: 8,
-    shadowColor: Colors.emerald, shadowOffset: { width: 0, height: 6 },
+    shadowColor: ICE, shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.4, shadowRadius: 12, elevation: 8,
   },
   permBtnText: { color: Colors.white, fontWeight: "700", fontSize: 16 },
   permBack:    { paddingVertical: 8 },
-  permBackText: { color: Colors.slate400, fontSize: 14 },
+  permBackText: { color: "#94A3B8", fontSize: 14 },
 
-  // ── Results dashboard ──────────────────────────────────────────────────────
-  dashRoot:   { flex: 1, backgroundColor: Colors.slate50 },
+  // ── Results dashboard — light canvas ──────────────────────────────────────
+  dashRoot:   { flex: 1, backgroundColor: "#F8FAFC" },
   dashScroll: { flexGrow: 1, padding: 18, paddingTop: 12, paddingBottom: 48, gap: 14 },
 
   dashHeader: {
     flexDirection: "row", alignItems: "center", gap: 14,
-    backgroundColor: Colors.white, borderRadius: 18,
-    borderWidth: 1, borderColor: Colors.zinc, padding: 14,
-    shadowColor: Colors.slate900, shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05, shadowRadius: 8, elevation: 2,
+    backgroundColor: "#FFFFFF", borderRadius: 18,
+    borderWidth: 1, borderColor: "#E2E8F0", padding: 14,
+    shadowColor: "#64748B", shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08, shadowRadius: 12, elevation: 3,
   },
   thumbnail:      { width: 72, height: 72, borderRadius: 12 },
   dashHeaderText: { flex: 1, gap: 3 },
-  dashTitle:      { fontSize: 16, fontWeight: "700", color: Colors.slate900 },
-  dashSubtitle:   { fontSize: 13, color: Colors.slate600 },
+  dashTitle:      { fontSize: 16, fontWeight: "700", color: "#0F172A" },
+  dashSubtitle:   { fontSize: 13, color: "#64748B" },
   avgRow:         { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 2 },
-  avgText:        { fontSize: 12, color: Colors.emerald, fontWeight: "600" },
+  avgText:        { fontSize: 12, color: ICE, fontWeight: "600" },
 
   caloriesCard: {
     flexDirection: "row", alignItems: "center", gap: 18,
-    backgroundColor: alpha(Colors.emerald, 16),
-    borderRadius: 18, borderWidth: 1.5, borderColor: alpha(Colors.emerald, 65), padding: 20,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18, borderWidth: 1, borderColor: "#E2E8F0", padding: 20,
+    shadowColor: "#64748B", shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08, shadowRadius: 12, elevation: 3,
   },
   caloriesIconWrap: {
     width: 48, height: 48, borderRadius: 24,
-    backgroundColor: alpha(Colors.emerald, 28),
+    backgroundColor: "rgba(85,205,252,0.12)",
     alignItems: "center", justifyContent: "center",
   },
   caloriesLabel: {
-    fontSize: 11, fontWeight: "700", color: Colors.teal,
+    fontSize: 11, fontWeight: "700", color: "#64748B",
     letterSpacing: 0.9, textTransform: "uppercase",
   },
-  caloriesValue: { fontSize: 44, fontWeight: "800", color: Colors.emerald, lineHeight: 50 },
-  caloriesUnit:  { fontSize: 12, color: Colors.slate600 },
+  caloriesValue: { fontSize: 44, fontWeight: "800", color: "#0F172A", lineHeight: 50 },
+  caloriesUnit:  { fontSize: 12, color: "#94A3B8" },
 
   card: {
-    backgroundColor: Colors.white, borderRadius: 18,
-    borderWidth: 1, borderColor: Colors.zinc, padding: 18, gap: 14,
-    shadowColor: Colors.slate900, shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05, shadowRadius: 8, elevation: 2,
+    backgroundColor: "#FFFFFF", borderRadius: 18,
+    borderWidth: 1, borderColor: "#E2E8F0", padding: 18, gap: 14,
+    shadowColor: "#64748B", shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08, shadowRadius: 12, elevation: 3,
   },
   sectionTitle: {
-    fontSize: 11, fontWeight: "700", color: Colors.slate400,
+    fontSize: 11, fontWeight: "700", color: "#64748B",
     letterSpacing: 0.9, textTransform: "uppercase",
   },
-  disclaimer: { fontSize: 11, color: Colors.slate400, lineHeight: 16 },
+  disclaimer: { fontSize: 11, color: "#94A3B8", lineHeight: 16 },
 
   macroRow:      { flexDirection: "row", alignItems: "center", gap: 10 },
   macroLabelCol: { flexDirection: "row", alignItems: "center", gap: 7, width: 68 },
   macroDot:      { width: 8, height: 8, borderRadius: 4 },
-  macroLabel:    { fontSize: 13, fontWeight: "600", color: Colors.slate900 },
+  macroLabel:    { fontSize: 13, fontWeight: "600", color: "#0F172A" },
   macroTrack: {
     flex: 1, height: 10, borderRadius: 5,
-    backgroundColor: Colors.slate100,
+    backgroundColor: "#F1F5F9",
     flexDirection: "row", overflow: "hidden",
   },
   macroFill:  { borderRadius: 5 },
@@ -897,20 +908,20 @@ const styles = StyleSheet.create({
   foodCard: {
     flexDirection: "row", alignItems: "center", gap: 12,
     paddingVertical: 11,
-    borderTopWidth: 1, borderTopColor: Colors.slate100,
+    borderTopWidth: 1, borderTopColor: "#F1F5F9",
   },
   foodIndex: {
     width: 28, height: 28, borderRadius: 14,
-    backgroundColor: alpha(Colors.emerald, 20),
+    backgroundColor: "rgba(85,205,252,0.12)",
     alignItems: "center", justifyContent: "center", flexShrink: 0,
   },
-  foodIndexText: { fontSize: 12, fontWeight: "800", color: Colors.emerald },
+  foodIndexText: { fontSize: 12, fontWeight: "800", color: ICE },
   foodBody:   { flex: 1 },
-  foodName:   { fontSize: 14, fontWeight: "600", color: Colors.slate900 },
+  foodName:   { fontSize: 14, fontWeight: "600", color: "#0F172A" },
   foodMeta:   { flexDirection: "row", alignItems: "center", marginTop: 3, gap: 4 },
-  foodGrams:  { fontSize: 11, color: Colors.slate600 },
-  foodDot:    { fontSize: 11, color: Colors.slate400 },
-  foodKcal:   { fontSize: 11, color: Colors.slate600, fontWeight: "600" },
+  foodGrams:  { fontSize: 11, color: "#64748B" },
+  foodDot:    { fontSize: 11, color: "#CBD5E1" },
+  foodKcal:   { fontSize: 11, color: "#64748B", fontWeight: "600" },
   foodSource: { fontSize: 10, fontWeight: "700", letterSpacing: 0.3 },
   badge: {
     flexDirection: "row", alignItems: "center", gap: 4,
@@ -921,16 +932,16 @@ const styles = StyleSheet.create({
 
   primaryBtn: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10,
-    backgroundColor: Colors.emerald, paddingVertical: 16, borderRadius: 16,
-    shadowColor: Colors.emerald, shadowOffset: { width: 0, height: 8 },
+    backgroundColor: ICE, paddingVertical: 16, borderRadius: 16,
+    shadowColor: ICE, shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.38, shadowRadius: 14, elevation: 10,
   },
   primaryBtnText: { color: Colors.white, fontSize: 16, fontWeight: "700", letterSpacing: 0.2 },
   outlineBtn: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
     paddingVertical: 14, borderRadius: 16,
-    borderWidth: 1.5, borderColor: Colors.emerald,
-    backgroundColor: alpha(Colors.emerald, 12),
+    borderWidth: 1.5, borderColor: ICE,
+    backgroundColor: "rgba(85,205,252,0.10)",
   },
-  outlineBtnText: { color: Colors.emerald, fontSize: 15, fontWeight: "600" },
+  outlineBtnText: { color: ICE, fontSize: 15, fontWeight: "600" },
 });
