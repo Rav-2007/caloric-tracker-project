@@ -223,13 +223,13 @@ export default function HomeScreen() {
             name="Ravi Kumar"
             avatarInitials="RK"
             streak={21}
-            targetCalories={2300}
-            consumedCalories={1610}
+            targetCalories={TARGET_KCAL}
+            consumedCalories={CONSUMED_KCAL}
             tier="Swasth Pro"
             weightKg={72}
-            protein={140}
-            carbs={210}
-            fats={65}
+            protein={MACROS[0].current}
+            carbs={MACROS[1].current}
+            fats={MACROS[2].current}
           />
         </View>
 

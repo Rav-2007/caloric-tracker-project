@@ -15,7 +15,12 @@ load_dotenv()
 # Connection URL
 # ---------------------------------------------------------------------------
 # Must use the asyncpg dialect: postgresql+asyncpg://user:pass@host/db
-_DATABASE_URL: str = os.environ["DATABASE_URL"]
+_DATABASE_URL: str = os.environ.get("DATABASE_URL", "")
+if not _DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL environment variable is not set. "
+        "Copy .env.example → .env and fill in the Supabase connection string."
+    )
 
 if not _DATABASE_URL.startswith("postgresql+asyncpg://"):
     # Allow bare postgresql:// URLs in .env.example and rewrite them at runtime
@@ -95,16 +100,3 @@ async def get_async_db() -> AsyncGenerator[AsyncSession, None]:
             await session.rollback()
             raise
 
-
-# ---------------------------------------------------------------------------
-# Startup / Shutdown helpers  (wire these into FastAPI lifespan)
-# ---------------------------------------------------------------------------
-async def connect_db() -> None:
-    """Verify connectivity at startup by acquiring and releasing one connection."""
-    async with engine.connect() as conn:
-        await conn.run_sync(lambda _: None)  # no-op — just proves the pool works
-
-
-async def disconnect_db() -> None:
-    """Gracefully drain all pooled connections on shutdown."""
-    await engine.dispose()

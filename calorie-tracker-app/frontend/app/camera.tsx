@@ -18,6 +18,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Dimensions,
   Image,
   Platform,
   ScrollView,
@@ -29,15 +30,20 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { CameraView, CameraType, useCameraPermissions } from "expo-camera";
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
-import Svg, { Circle } from "react-native-svg";
+import * as ImagePicker from "expo-image-picker";
 import {
   AlertTriangle,
   BookmarkPlus,
   CheckCircle2,
   Flame,
   FlipHorizontal,
+  HelpCircle,
+  Image as ImageIcon,
+  QrCode,
   RefreshCw,
   ShieldAlert,
+  Sparkles,
+  Tag,
   X,
   Zap,
 } from "lucide-react-native";
@@ -49,14 +55,14 @@ import { Colors, alpha } from "@/constants/colors";
 const API_URL = "http://10.82.194.56:8000";
 const NETWORK_TIMEOUT_MS = 70_000;
 
-// Guide ring geometry
-const GUIDE_DIAMETER   = 264;
-const GUIDE_RADIUS_SVG = 128;  // SVG circle r value
-const GUIDE_CENTER     = GUIDE_DIAMETER / 2;
-const GUIDE_STROKE     = 2.5;
-// Inner clipping area (scanner bar is clipped to this circle)
-const CLIP_DIAMETER    = GUIDE_DIAMETER - 14;
-const CLIP_RADIUS      = CLIP_DIAMETER / 2;
+// L-bracket framing guide geometry (70% screen width, 60% screen height)
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
+const FRAME_WIDTH  = Math.round(SCREEN_W * 0.72);
+const FRAME_HEIGHT = Math.round(SCREEN_H * 0.60);
+const BRACKET_ARM  = 36;   // pixel length of each L-bracket arm
+// Scanner sweep clip area sits inside the bracket frame
+const SCAN_CLIP_W  = FRAME_WIDTH  - 16;
+const SCAN_CLIP_H  = FRAME_HEIGHT - 16;
 
 // Monospaced font for clinical loading text
 const MONO = Platform.OS === "ios" ? "Courier New" : "monospace";
@@ -73,6 +79,7 @@ const LOADING_MESSAGES = [
 // ─── 3. Domain Types ─────────────────────────────────────────────────────────
 
 type NutritionSource = "icmr_nin" | "estimated";
+type CameraMode     = "scan" | "barcode" | "label" | "gallery";
 
 interface FoodItem {
   item_name: string;
@@ -109,45 +116,23 @@ function confidenceMeta(conf: number): { label: string; color: string } {
 
 // ─── 5. Atomic Sub-components ────────────────────────────────────────────────
 
-/** Pulsing dashed emerald ring — framing guide for plate capture */
-function ThaliGuideRing({ pulseScale, pulseOpacity }: {
+/** Four ice-blue L-bracket corners that breathe to guide plate framing */
+function BracketFrame({ pulseScale, pulseOpacity }: {
   pulseScale: Animated.AnimatedInterpolation<number>;
   pulseOpacity: Animated.AnimatedInterpolation<number>;
 }) {
   return (
     <Animated.View
       style={[
-        styles.guideRingWrap,
+        styles.bracketFrame,
         { transform: [{ scale: pulseScale }], opacity: pulseOpacity },
       ]}
       pointerEvents="none"
     >
-      <Svg
-        width={GUIDE_DIAMETER}
-        height={GUIDE_DIAMETER}
-        viewBox={`0 0 ${GUIDE_DIAMETER} ${GUIDE_DIAMETER}`}
-      >
-        {/* Dim track */}
-        <Circle
-          cx={GUIDE_CENTER}
-          cy={GUIDE_CENTER}
-          r={GUIDE_RADIUS_SVG}
-          stroke="rgba(255,255,255,0.12)"
-          strokeWidth={GUIDE_STROKE}
-          fill="none"
-        />
-        {/* Dashed sky-blue guide */}
-        <Circle
-          cx={GUIDE_CENTER}
-          cy={GUIDE_CENTER}
-          r={GUIDE_RADIUS_SVG}
-          stroke="#55CDFC"
-          strokeWidth={GUIDE_STROKE}
-          fill="none"
-          strokeDasharray="14 9"
-          strokeLinecap="round"
-        />
-      </Svg>
+      <View style={[styles.bracket, styles.bracketTL]} />
+      <View style={[styles.bracket, styles.bracketTR]} />
+      <View style={[styles.bracket, styles.bracketBL]} />
+      <View style={[styles.bracket, styles.bracketBR]} />
     </Animated.View>
   );
 }
@@ -179,7 +164,7 @@ function ScannerLine({ active }: { active: boolean }) {
 
   const translateY = scanAnim.interpolate({
     inputRange:  [0, 1],
-    outputRange: [-CLIP_RADIUS, CLIP_RADIUS],
+    outputRange: [-SCAN_CLIP_H / 2, SCAN_CLIP_H / 2],
   });
 
   if (!active) return null;
@@ -210,6 +195,53 @@ function PermissionGate({ onRequest }: { onRequest: () => void }) {
       <TouchableOpacity onPress={() => router.back()} style={styles.permBack}>
         <Text style={styles.permBackText}>Go back</Text>
       </TouchableOpacity>
+    </View>
+  );
+}
+
+/** Glassmorphism horizontal mode pill — Scan Food / Barcode / Food label / Gallery */
+function ModeSelector({
+  active,
+  onSelect,
+}: {
+  active: CameraMode;
+  onSelect: (m: CameraMode) => void;
+}) {
+  const MODES: { id: CameraMode; label: string; Icon: React.ComponentType<{ size: number; color: string; strokeWidth: number }> }[] = [
+    { id: "scan",    label: "Scan Food",   Icon: Sparkles  },
+    { id: "barcode", label: "Barcode",     Icon: QrCode    },
+    { id: "label",   label: "Food label",  Icon: Tag       },
+    { id: "gallery", label: "Gallery",     Icon: ImageIcon },
+  ];
+
+  return (
+    <View style={styles.modeSelectorWrap}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.modeSelectorContent}
+      >
+        {MODES.map(({ id, label, Icon }) => {
+          const isActive = active === id;
+          return (
+            <TouchableOpacity
+              key={id}
+              style={[styles.modeBtn, isActive && styles.modeBtnActive]}
+              onPress={() => onSelect(id)}
+              activeOpacity={0.75}
+            >
+              <Icon
+                size={14}
+                color={isActive ? "#0F172A" : Colors.white}
+                strokeWidth={2}
+              />
+              <Text style={[styles.modeBtnText, isActive && styles.modeBtnTextActive]}>
+                {label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
     </View>
   );
 }
@@ -448,6 +480,7 @@ export default function CameraScreen() {
   const [permission, requestPermission] = useCameraPermissions();
 
   const [facing, setFacing]           = useState<CameraType>("back");
+  const [flashOn, setFlashOn]         = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
 
   const [photoUri, setPhotoUri]             = useState<string | null>(null);
@@ -486,12 +519,16 @@ export default function CameraScreen() {
     return () => clearInterval(id);
   }, [isAnalyzing]);
 
+  const [cameraMode, setCameraMode] = useState<CameraMode>("scan");
+
   const resetState = useCallback(() => {
     setPhotoUri(null);
     setAnalysisResult(null);
     setNetworkError(null);
     setIsAnalyzing(false);
+    setIsCapturing(false);
     setLoadingMsgIdx(0);
+    setCameraMode("scan");
   }, []);
 
   const sendToBackend = useCallback(async (uri: string) => {
@@ -503,7 +540,10 @@ export default function CameraScreen() {
 
     try {
       const formData = new FormData();
-      formData.append("file", { uri, name: "meal.jpg", type: "image/jpeg" } as unknown as Blob);
+      // Unique timestamped filename per submission — prevents the backend's
+      // 30-second dedup check from blocking a second scan taken within that window.
+      const filename = `meal_${Date.now()}.jpg`;
+      formData.append("file", { uri, name: filename, type: "image/jpeg" } as unknown as Blob);
 
       const response = await fetch(`${API_URL}/api/v1/analyze-food`, {
         method: "POST",
@@ -536,6 +576,38 @@ export default function CameraScreen() {
       setIsAnalyzing(false);
     }
   }, []);
+
+  const pickAndAnalyze = useCallback(async () => {
+    if (isCapturing) return;
+    setIsCapturing(true);
+    try {
+      const picked = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: "images",
+        quality: 1,
+      });
+      if (picked.canceled || !picked.assets.length) return;
+
+      const imageContext = ImageManipulator.manipulate(picked.assets[0].uri);
+      const resized      = await imageContext.resize({ width: 1280 }).renderAsync();
+      const compressed   = await resized.saveAsync({ compress: 0.88, format: SaveFormat.JPEG });
+
+      setPhotoUri(compressed.uri);
+      await sendToBackend(compressed.uri);
+    } catch (err: unknown) {
+      Alert.alert(
+        "Gallery failed",
+        err instanceof Error ? err.message : "Could not load image from gallery.",
+      );
+    } finally {
+      setIsCapturing(false);
+      setCameraMode("scan");
+    }
+  }, [isCapturing, sendToBackend]);
+
+  const handleModeSelect = useCallback((mode: CameraMode) => {
+    setCameraMode(mode);
+    if (mode === "gallery") pickAndAnalyze();
+  }, [pickAndAnalyze]);
 
   const processAndAnalyze = useCallback(async () => {
     if (!cameraRef.current || isCapturing) return;
@@ -579,22 +651,33 @@ export default function CameraScreen() {
   return (
     <View style={styles.root}>
       <StatusBar style="light" />
-      <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing={facing} />
+      <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing={facing} flash={flashOn ? "on" : "off"} />
 
       {/* Vignette */}
-      <View style={[styles.vignette, { pointerEvents: "none" }]} />
+      <View pointerEvents="none" style={styles.vignette} />
 
       <SafeAreaView style={styles.overlay} edges={["top", "bottom"]}>
         {/* Top bar */}
         <View style={styles.topBar}>
-          <TouchableOpacity style={styles.iconBtn} onPress={() => router.back()}>
+          <TouchableOpacity style={styles.iconBtn} onPress={() => router.back()} activeOpacity={0.75}>
             <X size={20} color={Colors.white} strokeWidth={2} />
           </TouchableOpacity>
           <View style={styles.livePill}>
             <View style={styles.liveDot} />
             <Text style={styles.liveText}>LIVE</Text>
           </View>
-          <View style={styles.iconBtn} />
+          <TouchableOpacity
+            style={styles.iconBtn}
+            activeOpacity={0.75}
+            onPress={() =>
+              Alert.alert(
+                "How to scan",
+                "Frame your plate within the guides and tap the shutter button. Keep the meal well-lit and centred for best results.",
+              )
+            }
+          >
+            <HelpCircle size={20} color={Colors.white} strokeWidth={2} />
+          </TouchableOpacity>
         </View>
 
         {/* Viewfinder / guide ring */}
@@ -611,37 +694,56 @@ export default function CameraScreen() {
                 {/* Scanner line — clipped to circle shape */}
                 <ScannerLine active={isAnalyzing} />
 
-                {/* Pulsing dashed ring (above scanner) */}
-                <ThaliGuideRing pulseScale={pulseScale} pulseOpacity={pulseOpacity} />
+                {/* Breathing L-bracket frame (above scanner) */}
+                <BracketFrame pulseScale={pulseScale} pulseOpacity={pulseOpacity} />
               </View>
 
               <Text style={styles.finderHint}>
-                {isAnalyzing ? "Analyzing your thali..." : "Place your Thali inside the ring"}
+                {isAnalyzing ? "Analyzing your meal..." : "Frame your plate within the guides"}
               </Text>
             </>
           )}
         </View>
 
-        {/* Bottom controls */}
-        <View style={styles.controls}>
-          <TouchableOpacity
-            style={styles.controlBtn}
-            onPress={() => setFacing((f) => (f === "back" ? "front" : "back"))}
-            activeOpacity={0.75}
-          >
-            <FlipHorizontal size={22} color={Colors.white} strokeWidth={1.75} />
-          </TouchableOpacity>
+        {/* Mode selector + shutter */}
+        <View style={styles.bottomSection}>
+          <ModeSelector active={cameraMode} onSelect={handleModeSelect} />
 
-          <TouchableOpacity
-            style={[styles.captureBtn, isCapturing && styles.captureBtnBusy]}
-            onPress={processAndAnalyze}
-            activeOpacity={0.88}
-            disabled={isCapturing}
-          >
-            <View style={styles.captureInner} />
-          </TouchableOpacity>
+          <View style={styles.controls}>
+            <TouchableOpacity
+              style={[
+                styles.controlBtn,
+                flashOn && facing === "back" && styles.controlBtnActive,
+                facing === "front" && styles.controlBtnDisabled,
+              ]}
+              onPress={() => { if (facing === "back") setFlashOn((v) => !v); }}
+              activeOpacity={0.75}
+            >
+              <Zap
+                size={20}
+                color={flashOn && facing === "back" ? ICE : Colors.white}
+                strokeWidth={1.75}
+                fill={flashOn && facing === "back" ? ICE : "none"}
+              />
+            </TouchableOpacity>
 
-          <View style={styles.controlBtn} />
+            <TouchableOpacity
+              style={[styles.captureBtn, isCapturing && styles.captureBtnBusy]}
+              onPress={processAndAnalyze}
+              activeOpacity={0.88}
+              disabled={isCapturing}
+            >
+              <View style={styles.captureInner} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.controlBtn}
+              onPress={() => setFacing((f) => (f === "back" ? "front" : "back"))}
+              activeOpacity={0.75}
+            >
+              <FlipHorizontal size={22} color={Colors.white} strokeWidth={1.75} />
+            </TouchableOpacity>
+          </View>
         </View>
       </SafeAreaView>
 
@@ -682,27 +784,50 @@ const styles = StyleSheet.create({
   // Viewfinder
   finderWrapper: { alignItems: "center", gap: 18 },
 
-  // Guide ring stacking container
+  // Framing bracket stacking container
   guideOuter: {
-    width: GUIDE_DIAMETER,
-    height: GUIDE_DIAMETER,
+    width: FRAME_WIDTH,
+    height: FRAME_HEIGHT,
     alignItems: "center",
     justifyContent: "center",
   },
 
-  // Dashed ring SVG wrapper (pulse-animated)
-  guideRingWrap: {
+  // Outer animated wrapper for the four bracket corners
+  bracketFrame: {
     position: "absolute",
-    width: GUIDE_DIAMETER,
-    height: GUIDE_DIAMETER,
+    width: FRAME_WIDTH,
+    height: FRAME_HEIGHT,
   },
 
-  // Scanner line clip (circular overflow:hidden so bar is invisible outside the ring)
+  // Shared base for all four L-bracket corners
+  bracket: {
+    position: "absolute",
+    width: BRACKET_ARM,
+    height: BRACKET_ARM,
+    borderColor: ICE,
+  },
+  bracketTL: {
+    top: 0, left: 0,
+    borderTopWidth: 3, borderLeftWidth: 3, borderTopLeftRadius: 16,
+  },
+  bracketTR: {
+    top: 0, right: 0,
+    borderTopWidth: 3, borderRightWidth: 3, borderTopRightRadius: 16,
+  },
+  bracketBL: {
+    bottom: 0, left: 0,
+    borderBottomWidth: 3, borderLeftWidth: 3, borderBottomLeftRadius: 16,
+  },
+  bracketBR: {
+    bottom: 0, right: 0,
+    borderBottomWidth: 3, borderRightWidth: 3, borderBottomRightRadius: 16,
+  },
+
+  // Scanner sweep clip — rectangular, clipped to frame inset
   scannerClip: {
     position: "absolute",
-    width: CLIP_DIAMETER,
-    height: CLIP_DIAMETER,
-    borderRadius: CLIP_RADIUS,
+    width: SCAN_CLIP_W,
+    height: SCAN_CLIP_H,
     overflow: "hidden",
     alignItems: "center",
     justifyContent: "center",
@@ -710,7 +835,7 @@ const styles = StyleSheet.create({
 
   // The sweeping bar itself
   scannerBar: {
-    width: CLIP_DIAMETER,
+    width: SCAN_CLIP_W,
     height: 2,
     borderRadius: 1,
     backgroundColor: "rgba(85,205,252,0.75)",
@@ -728,6 +853,41 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
 
+  // ── Mode selector ──────────────────────────────────────────────────────────
+  bottomSection: { gap: 10 },
+
+  modeSelectorWrap: {
+    marginHorizontal: 16,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    borderRadius: 24,
+    paddingVertical: 6,
+  },
+  modeSelectorContent: {
+    paddingHorizontal: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  modeBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 20,
+  },
+  modeBtnActive: {
+    backgroundColor: Colors.white,
+  },
+  modeBtnText: {
+    color: Colors.white,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  modeBtnTextActive: {
+    color: "#0F172A",
+  },
+
   // Bottom controls
   controls: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
@@ -739,17 +899,23 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: alpha(Colors.white, 30),
     alignItems: "center", justifyContent: "center",
   },
-  captureBtn: {
-    width: 78, height: 78, borderRadius: 39,
-    backgroundColor: ICE, borderWidth: 3, borderColor: "rgba(255,255,255,0.85)",
-    alignItems: "center", justifyContent: "center",
-    shadowColor: ICE, shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.65, shadowRadius: 18, elevation: 14,
+  controlBtnActive: {
+    backgroundColor: alpha(ICE, 40),
+    borderColor: alpha(ICE, 120),
   },
-  captureBtnBusy: { backgroundColor: "rgba(85,205,252,0.60)", borderColor: "rgba(85,205,252,0.30)" },
+  controlBtnDisabled: {
+    opacity: 0.35,
+  },
+  captureBtn: {
+    width: 80, height: 80, borderRadius: 40,
+    backgroundColor: "transparent",
+    borderWidth: 4, borderColor: "rgba(255,255,255,0.55)",
+    alignItems: "center", justifyContent: "center",
+  },
+  captureBtnBusy: { opacity: 0.45 },
   captureInner: {
-    width: 56, height: 56, borderRadius: 28,
-    backgroundColor: alpha(Colors.white, 30),
+    width: 62, height: 62, borderRadius: 31,
+    backgroundColor: Colors.white,
   },
 
   // ── Frosted-glass loading overlay ─────────────────────────────────────────

@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import engine, get_async_db
 from models import MealScan
-from nutrition import resolve_nutrition
+from nutrition import resolve_nutrition_batch
 
 load_dotenv()
 
@@ -366,27 +366,27 @@ async def analyze_food(
             ),
         )
 
-    # 7. Enrich each item with ICMR-NIN macros via async DB lookup.
-    #    Each call issues one SELECT … WHERE food_key IN (…) against
-    #    icmr_food_references, picks the longest matching key, and falls back
-    #    to the 1.85 kcal/g formula when no row matches.
-    enriched: list[FoodItem] = []
-    for raw in gemini_result.food_items:
-        kcal, protein, carbs, fat, source = await resolve_nutrition(
-            raw.item_name, raw.estimated_grams, db
+    # 7. Enrich every item with ICMR-NIN macros — one batched DB round-trip
+    #    for all items rather than N sequential queries.
+    nutrition_results = await resolve_nutrition_batch(
+        [(raw.item_name, raw.estimated_grams) for raw in gemini_result.food_items],
+        db,
+    )
+    enriched: list[FoodItem] = [
+        FoodItem(
+            item_name=raw.item_name,
+            estimated_grams=raw.estimated_grams,
+            visual_confidence=raw.visual_confidence,
+            calories=kcal,
+            protein_g=protein,
+            carbs_g=carbs,
+            fat_g=fat,
+            nutrition_source=source,
         )
-        enriched.append(
-            FoodItem(
-                item_name=raw.item_name,
-                estimated_grams=raw.estimated_grams,
-                visual_confidence=raw.visual_confidence,
-                calories=kcal,
-                protein_g=protein,
-                carbs_g=carbs,
-                fat_g=fat,
-                nutrition_source=source,
-            )
+        for raw, (kcal, protein, carbs, fat, source) in zip(
+            gemini_result.food_items, nutrition_results
         )
+    ]
 
     result = FoodAnalysisResult(
         food_items=enriched,

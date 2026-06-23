@@ -121,25 +121,11 @@ function GramSlider({ value, color, onChange }: SliderProps) {
       {...panResponder.panHandlers}
     >
       {/* Filled portion */}
-      <View
-        style={{
-          flex: Math.max(pct, 0.001),
-          height: 6,
-          backgroundColor: color,
-          borderRadius: 3,
-        }}
-      />
+      <View style={[styles.sliderFill, { flex: Math.max(pct, 0.001), backgroundColor: color }]} />
       {/* Draggable thumb */}
       <View style={[styles.sliderThumb, { backgroundColor: color }]} />
       {/* Empty portion */}
-      <View
-        style={{
-          flex: Math.max(1 - pct, 0.001),
-          height: 6,
-          backgroundColor: "#E2E8F0",
-          borderRadius: 3,
-        }}
-      />
+      <View style={[styles.sliderEmpty, { flex: Math.max(1 - pct, 0.001) }]} />
     </View>
   );
 }
@@ -259,19 +245,17 @@ export default function ReviewScreen() {
     }
   }, [data]);
 
-  // Per-item weight state — initialised from Gemini's estimates
-  const [weights, setWeights] = useState<Record<string, number>>(() =>
-    Object.fromEntries(
-      result.food_items.map((i) => [i.item_name, i.estimated_grams]),
-    ),
+  // Per-item weight state keyed by index — avoids collision when two items share the same name
+  const [weights, setWeights] = useState<number[]>(() =>
+    result.food_items.map((i) => i.estimated_grams),
   );
 
-  const setWeight = (name: string, g: number) =>
-    setWeights((prev) => ({ ...prev, [name]: g }));
+  const setWeight = (index: number, g: number) =>
+    setWeights((prev) => prev.map((w, i) => (i === index ? g : w)));
 
   // Live total — recomputed on every slider move
-  const totalCalories = result.food_items.reduce((sum, item) => {
-    const w     = weights[item.item_name] ?? item.estimated_grams;
+  const totalCalories = result.food_items.reduce((sum, item, i) => {
+    const w     = weights[i] ?? item.estimated_grams;
     const scale = item.estimated_grams > 0 ? w / item.estimated_grams : 1;
     return sum + Math.round(item.calories * scale);
   }, 0);
@@ -334,9 +318,9 @@ export default function ReviewScreen() {
           <ItemAdjustCard
             key={`${item.item_name}-${i}`}
             item={item}
-            grams={weights[item.item_name] ?? item.estimated_grams}
+            grams={weights[i] ?? item.estimated_grams}
             accent={ACCENT_POOL[i % ACCENT_POOL.length]}
-            onGramsChange={(g) => setWeight(item.item_name, g)}
+            onGramsChange={(g) => setWeight(i, g)}
           />
         ))}
       </ScrollView>
@@ -461,6 +445,12 @@ const styles = StyleSheet.create({
   // Slider
   sliderOuter: {
     flexDirection: "row", alignItems: "center", height: 36, paddingHorizontal: 2,
+  },
+  sliderFill: {
+    height: 6, borderRadius: 3,
+  },
+  sliderEmpty: {
+    height: 6, borderRadius: 3, backgroundColor: "#E2E8F0",
   },
   sliderThumb: {
     width: 24, height: 24, borderRadius: 12,

@@ -18,6 +18,8 @@ Resolution strategy
 Source: ICMR-NIN "Nutritive Value of Indian Foods" (2017), BV Rao & T Polasa.
 """
 
+import re
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,7 +46,10 @@ def _candidate_keys(item_name: str) -> list[str]:
     "Dal Tadka"  →
         ["dal_tadka", "dal", "tadka"]
     """
-    words = item_name.lower().replace("-", " ").split()
+    # Strip everything that isn't a letter, digit, or space so parentheses,
+    # slashes, and '+' from Gemini labels don't produce junk candidate keys.
+    normalized = re.sub(r"[^a-z0-9\s]", "", item_name.lower().replace("-", " "))
+    words = normalized.split()
     candidates: list[str] = []
     # Walk from full-length span down to single-word span
     for span in range(len(words), 0, -1):
@@ -53,55 +58,8 @@ def _candidate_keys(item_name: str) -> list[str]:
     return candidates
 
 
-async def resolve_nutrition(
-    item_name: str,
-    estimated_grams: int,
-    db: AsyncSession,
-) -> tuple[float, float, float, float, str]:
-    """
-    Resolve macros for one food item using the ``icmr_food_references`` table.
-
-    Parameters
-    ----------
-    item_name
-        Dish name as returned by Gemini (e.g. "Chicken Tikka Masala").
-    estimated_grams
-        Portion weight in grams as estimated by Gemini.
-    db
-        Active ``AsyncSession`` injected from the request dependency.
-
-    Returns
-    -------
-    ``(calories, protein_g, carbs_g, fat_g, source)``
-
-    ``source`` is ``"icmr_nin"`` when a DB row was matched, ``"estimated"``
-    when the fallback formula is used.
-    """
-    candidates = _candidate_keys(item_name)
-
-    # Single DB round-trip: fetch all rows whose food_key appears in our
-    # candidate list, then pick the longest (most specific) match in Python.
-    result = await db.execute(
-        select(ICMRFoodReference).where(
-            ICMRFoodReference.food_key.in_(candidates)
-        )
-    )
-    matches = result.scalars().all()
-
-    if matches:
-        # Longest food_key = most specific match:
-        # "paneer_tikka_masala" (19 chars) beats "paneer_tikka" (12) beats "paneer" (6)
-        best = max(matches, key=lambda row: len(row.food_key))
-        factor = estimated_grams / 100.0
-        return (
-            round(best.calories_per_100g * factor, 1),
-            round(best.protein_per_100g  * factor, 1),
-            round(best.carbs_per_100g    * factor, 1),
-            round(best.fat_per_100g      * factor, 1),
-            "icmr_nin",
-        )
-
-    # ── Fallback: ICMR-NIN population average ─────────────────────────────────
+def _apply_fallback(estimated_grams: int) -> tuple[float, float, float, float, str]:
+    """ICMR-NIN population-average formula used when no DB row matches."""
     total_kcal = estimated_grams * _FALLBACK_KCAL_PER_G
     return (
         round(total_kcal, 1),
@@ -110,3 +68,66 @@ async def resolve_nutrition(
         round((total_kcal * _FALLBACK_FAT_SHARE)     / 9.0, 1),
         "estimated",
     )
+
+
+async def resolve_nutrition_batch(
+    items: list[tuple[str, int]],
+    db: AsyncSession,
+) -> list[tuple[float, float, float, float, str]]:
+    """
+    Resolve macros for a list of ``(item_name, estimated_grams)`` pairs using
+    a **single** DB round-trip instead of one query per item.
+
+    Strategy
+    --------
+    1. Build candidate keys for every item and union them into one big set.
+    2. Issue a single ``SELECT … WHERE food_key IN (all_candidates)`` query.
+    3. For each item, find the longest matching key from the returned rows
+       (most-specific match wins), then scale per-100 g values by gram weight.
+    4. Items with no DB match fall back to the ICMR-NIN population average.
+
+    Returns
+    -------
+    List of ``(calories, protein_g, carbs_g, fat_g, source)`` tuples,
+    one entry per input item, in the same order as ``items``.
+    """
+    if not items:
+        return []
+
+    # Build per-item candidate lists and collect the union of all keys.
+    per_item_candidates: list[list[str]] = [
+        _candidate_keys(name) for name, _ in items
+    ]
+    all_keys: set[str] = {key for cands in per_item_candidates for key in cands}
+
+    # One DB round-trip for all items.
+    result = await db.execute(
+        select(ICMRFoodReference).where(ICMRFoodReference.food_key.in_(all_keys))
+    )
+    rows_by_key: dict[str, ICMRFoodReference] = {
+        row.food_key: row for row in result.scalars().all()
+    }
+
+    # Distribute results — longest matching key wins per item.
+    output: list[tuple[float, float, float, float, str]] = []
+    for (_, estimated_grams), candidates in zip(items, per_item_candidates):
+        best: ICMRFoodReference | None = None
+        for key in candidates:  # candidates already ordered longest-span first
+            if key in rows_by_key:
+                row = rows_by_key[key]
+                if best is None or len(row.food_key) > len(best.food_key):
+                    best = row
+
+        if best is not None:
+            factor = estimated_grams / 100.0
+            output.append((
+                round(best.calories_per_100g * factor, 1),
+                round(best.protein_per_100g  * factor, 1),
+                round(best.carbs_per_100g    * factor, 1),
+                round(best.fat_per_100g      * factor, 1),
+                "icmr_nin",
+            ))
+        else:
+            output.append(_apply_fallback(estimated_grams))
+
+    return output
