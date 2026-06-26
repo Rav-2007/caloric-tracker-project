@@ -987,7 +987,7 @@ async def seed_database() -> None:
                     "Successfully seeded %d ICMR-NIN food reference profiles.",
                     len(_SEED),
                 )
-            except Exception:
+            except BaseException:
                 await session.rollback()
                 logger.exception("Seed transaction failed — all changes rolled back.")
                 raise

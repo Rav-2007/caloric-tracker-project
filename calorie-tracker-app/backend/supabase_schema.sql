@@ -58,11 +58,6 @@ CREATE TABLE IF NOT EXISTS meal_scans (
 CREATE INDEX IF NOT EXISTS ix_meal_scans_created_at
     ON meal_scans (created_at);
 
--- B-Tree index on filename — used by the duplicate-upload guard
--- (WHERE filename = $1 AND created_at >= now() - interval '30 seconds')
-CREATE INDEX IF NOT EXISTS ix_meal_scans_filename
-    ON meal_scans (filename);
-
 
 -- ---------------------------------------------------------------------------
 -- Table: icmr_food_references
@@ -105,9 +100,5 @@ CREATE TABLE IF NOT EXISTS icmr_food_references (
 
 );
 
--- B-Tree index on food_key — the primary lookup path in resolve_nutrition():
---   SELECT … WHERE food_key IN (…)
--- Declared separately (in addition to the UNIQUE constraint's implicit index)
--- so SQLAlchemy's index=True on the column produces an exact name match.
-CREATE INDEX IF NOT EXISTS ix_icmr_food_references_food_key
-    ON icmr_food_references (food_key);
+-- No separate index needed: the UNIQUE constraint above implicitly creates
+-- a B-Tree index on food_key that PostgreSQL uses for IN (...) lookups.

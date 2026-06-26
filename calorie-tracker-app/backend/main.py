@@ -1,9 +1,10 @@
 import asyncio
+import hashlib
 import json as _json
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from dotenv import load_dotenv
@@ -12,7 +13,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,6 +37,32 @@ REQUEST_TIMEOUT_SECONDS = 60
 MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB
 
 ALLOWED_MIME_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
+
+# ---------------------------------------------------------------------------
+# In-memory duplicate submission guard
+# ---------------------------------------------------------------------------
+# Keyed by SHA-256 hex digest of the raw image bytes; value is monotonic
+# timestamp of first submission.  Safe for CPython single-process uvicorn —
+# dict mutations are GIL-protected.  For multi-worker deployments, replace
+# with a Redis TTL key.
+_seen_image_hashes: dict[str, float] = {}
+_DEDUP_WINDOW_S = 30.0
+
+
+def _is_recent_duplicate(image_bytes: bytes) -> bool:
+    """Return True if these exact bytes were submitted within the last 30 s."""
+    now = time.monotonic()
+    digest = hashlib.sha256(image_bytes).hexdigest()
+
+    # Prune expired entries so the dict doesn't grow unbounded.
+    expired = [h for h, ts in _seen_image_hashes.items() if now - ts >= _DEDUP_WINDOW_S]
+    for h in expired:
+        del _seen_image_hashes[h]
+
+    if digest in _seen_image_hashes:
+        return True
+    _seen_image_hashes[digest] = now
+    return False
 
 SYSTEM_PROMPT = """
 You are a specialist Indian food nutrition analyst with deep knowledge of regional cuisines
@@ -296,6 +322,18 @@ async def analyze_food(
     # 2. Validate format and size
     confirmed_mime = _validate_image(file.content_type, image_bytes)
 
+    # 2b. Reject duplicate submissions before any external API call.
+    #     Hashing here (not at DB write time) ensures we never bill a Gemini
+    #     token for a double-tap or network retry carrying the same bytes.
+    if _is_recent_duplicate(image_bytes):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                "This image was already submitted within the last 30 seconds. "
+                "Please wait before retrying."
+            ),
+        )
+
     # 3. Build multimodal request contents
     image_part = types.Part.from_bytes(data=image_bytes, mime_type=confirmed_mime)
     user_prompt = (
@@ -413,24 +451,6 @@ async def analyze_food(
 
     # 8. Persist scan to DB (fully non-blocking — all I/O awaited) ─────────────
     try:
-        # SELECT: guard against duplicate submission of the same filename within 30 s.
-        # Using await + select() keeps this on the async event loop with no thread blocking.
-        cutoff = datetime.now(timezone.utc) - timedelta(seconds=30)
-        dup_row = await db.execute(
-            select(MealScan.id)
-            .where(MealScan.filename == file.filename)  # None → IS NULL via SQLAlchemy
-            .where(MealScan.created_at >= cutoff)
-            .limit(1)
-        )
-        if dup_row.scalar_one_or_none() is not None:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=(
-                    "This image was already submitted within the last 30 seconds. "
-                    "Please wait before retrying."
-                ),
-            )
-
         # INSERT: add the record and flush so the server-generated PK is populated.
         # The actual COMMIT is deferred to get_async_db once the route returns normally.
         scan = MealScan(

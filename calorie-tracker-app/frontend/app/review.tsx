@@ -6,7 +6,7 @@
  * All macro values scale in real-time as the user drags the slider.
  */
 
-import React, { useRef, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Image,
@@ -161,7 +161,7 @@ interface ItemCardProps {
   onGramsChange: (g: number) => void;
 }
 
-function ItemAdjustCard({ item, grams, accent, onGramsChange }: ItemCardProps) {
+const ItemAdjustCard = React.memo(({ item, grams, accent, onGramsChange }: ItemCardProps) => {
   const scale   = item.estimated_grams > 0 ? grams / item.estimated_grams : 1;
   const liveCal = Math.round(item.calories  * scale);
   const livePro = (item.protein_g * scale).toFixed(1);
@@ -220,7 +220,7 @@ function ItemAdjustCard({ item, grams, accent, onGramsChange }: ItemCardProps) {
       </View>
     </View>
   );
-}
+});
 
 // ─── Screen ──────────────────────────────────────────────────────────────────
 export default function ReviewScreen() {
@@ -250,15 +250,27 @@ export default function ReviewScreen() {
     result.food_items.map((i) => i.estimated_grams),
   );
 
-  const setWeight = (index: number, g: number) =>
-    setWeights((prev) => prev.map((w, i) => (i === index ? g : w)));
+  // Stable updater — never recreated, so React.memo on ItemAdjustCard actually fires.
+  const setWeight = useCallback((index: number, g: number) =>
+    setWeights((prev) => prev.map((w, i) => (i === index ? g : w))),
+  []);
 
-  // Live total — recomputed on every slider move
-  const totalCalories = result.food_items.reduce((sum, item, i) => {
-    const w     = weights[i] ?? item.estimated_grams;
-    const scale = item.estimated_grams > 0 ? w / item.estimated_grams : 1;
-    return sum + Math.round(item.calories * scale);
-  }, 0);
+  // One stable callback per item — created only when the item list changes.
+  // Passing (g) => setWeight(i, g) inline would defeat React.memo every render.
+  const onGramsChangeCallbacks = useMemo(
+    () => result.food_items.map((_, i) => (g: number) => setWeight(i, g)),
+    [result.food_items, setWeight],
+  );
+
+  // Live total — only recomputed when weights or items change, not on unrelated renders.
+  const totalCalories = useMemo(
+    () => result.food_items.reduce((sum, item, i) => {
+      const w     = weights[i] ?? item.estimated_grams;
+      const scale = item.estimated_grams > 0 ? w / item.estimated_grams : 1;
+      return sum + Math.round(item.calories * scale);
+    }, 0),
+    [weights, result.food_items],
+  );
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
@@ -320,7 +332,7 @@ export default function ReviewScreen() {
             item={item}
             grams={weights[i] ?? item.estimated_grams}
             accent={ACCENT_POOL[i % ACCENT_POOL.length]}
-            onGramsChange={(g) => setWeight(i, g)}
+            onGramsChange={onGramsChangeCallbacks[i]}
           />
         ))}
       </ScrollView>

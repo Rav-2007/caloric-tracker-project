@@ -41,8 +41,8 @@ class MealScan(Base):
 
     # ── Request metadata ──────────────────────────────────────────────────────
     filename: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, index=True,
-        doc="Original filename from the multipart upload, used for dedup checks.",
+        String(255), nullable=True,
+        doc="Original filename from the multipart upload, stored for audit/logging.",
     )
     image_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
 
@@ -90,9 +90,10 @@ class ICMRFoodReference(Base):
 
     # ── Lookup key ────────────────────────────────────────────────────────────
     # snake_case; mirrors ICMR_NIN_TABLE keys, e.g. "dal_tadka", "roti_plain".
-    # Indexed for fast O(1) point lookups from the enrichment step.
+    # Uniqueness and the backing B-Tree index are provided by the named
+    # UniqueConstraint in __table_args__ — no separate unique=True or index=True needed.
     food_key: Mapped[str] = mapped_column(
-        String(255), nullable=False, unique=True, index=True
+        String(255), nullable=False
     )
 
     # ── Human-readable metadata ───────────────────────────────────────────────

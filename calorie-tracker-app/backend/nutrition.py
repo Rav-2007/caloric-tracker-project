@@ -50,11 +50,17 @@ def _candidate_keys(item_name: str) -> list[str]:
     # slashes, and '+' from Gemini labels don't produce junk candidate keys.
     normalized = re.sub(r"[^a-z0-9\s]", "", item_name.lower().replace("-", " "))
     words = normalized.split()
+    seen: set[str] = set()
     candidates: list[str] = []
-    # Walk from full-length span down to single-word span
-    for span in range(len(words), 0, -1):
+    # Cap at 4-word spans: Indian dish names almost never exceed 4 distinct
+    # terms, and unbounded spans on long Gemini strings produce O(N²) keys.
+    max_span = min(len(words), 4)
+    for span in range(max_span, 0, -1):
         for start in range(len(words) - span + 1):
-            candidates.append("_".join(words[start : start + span]))
+            key = "_".join(words[start : start + span])
+            if key not in seen:
+                seen.add(key)
+                candidates.append(key)
     return candidates
 
 
@@ -112,11 +118,10 @@ async def resolve_nutrition_batch(
     output: list[tuple[float, float, float, float, str]] = []
     for (_, estimated_grams), candidates in zip(items, per_item_candidates):
         best: ICMRFoodReference | None = None
-        for key in candidates:  # candidates already ordered longest-span first
+        for key in candidates:  # ordered longest-span first — first hit is the best match
             if key in rows_by_key:
-                row = rows_by_key[key]
-                if best is None or len(row.food_key) > len(best.food_key):
-                    best = row
+                best = rows_by_key[key]
+                break
 
         if best is not None:
             factor = estimated_grams / 100.0

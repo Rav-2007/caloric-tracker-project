@@ -102,6 +102,17 @@ interface FoodAnalysisResult {
 
 // ─── 4. Pure Helpers ─────────────────────────────────────────────────────────
 
+/**
+ * Single-pass resize + JPEG encode shared by the camera shutter and gallery picker.
+ * 1280 px wide at 0.88 quality → ~420–660 KB, sharp enough for Gemini dish ID.
+ */
+async function compressImage(uri: string): Promise<string> {
+  const ctx     = ImageManipulator.manipulate(uri);
+  const resized = await ctx.resize({ width: 1280 }).renderAsync();
+  const out     = await resized.saveAsync({ compress: 0.88, format: SaveFormat.JPEG });
+  return out.uri;
+}
+
 function avgConfidence(items: FoodItem[]): number {
   if (!items.length) return 0;
   return items.reduce((s, i) => s + i.visual_confidence, 0) / items.length;
@@ -251,15 +262,17 @@ function ModeSelector({
 function LoadingOverlay({ msgIndex }: { msgIndex: number }) {
   const activeIdx = msgIndex % LOADING_MESSAGES.length;
 
-  // Fade the text on each message change
+  // Fade the text on each message change; stop the animation if the overlay unmounts mid-fade.
   const fadeAnim = useRef(new Animated.Value(1)).current;
   useEffect(() => {
     fadeAnim.setValue(0);
-    Animated.timing(fadeAnim, {
+    const anim = Animated.timing(fadeAnim, {
       toValue: 1,
       duration: 420,
       useNativeDriver: true,
-    }).start();
+    });
+    anim.start();
+    return () => anim.stop();
   }, [activeIdx, fadeAnim]);
 
   return (
@@ -587,12 +600,9 @@ export default function CameraScreen() {
       });
       if (picked.canceled || !picked.assets.length) return;
 
-      const imageContext = ImageManipulator.manipulate(picked.assets[0].uri);
-      const resized      = await imageContext.resize({ width: 1280 }).renderAsync();
-      const compressed   = await resized.saveAsync({ compress: 0.88, format: SaveFormat.JPEG });
-
-      setPhotoUri(compressed.uri);
-      await sendToBackend(compressed.uri);
+      const compressedUri = await compressImage(picked.assets[0].uri);
+      setPhotoUri(compressedUri);
+      await sendToBackend(compressedUri);
     } catch (err: unknown) {
       Alert.alert(
         "Gallery failed",
@@ -617,18 +627,10 @@ export default function CameraScreen() {
       const photo = await cameraRef.current.takePictureAsync({ quality: 1.0 });
       if (!photo) return;
 
-      // Step 2 — Single-pass resize + encode at verified sweet spot:
-      //   1280 × auto  → preserves 4:3 aspect → 1280 × 960 on most phones
-      //   compress 0.88 → ~420–660 KB JPEG, sharp enough for Gemini dish ID
-      const imageContext  = ImageManipulator.manipulate(photo.uri);
-      const resizedImage  = await imageContext.resize({ width: 1280 }).renderAsync();
-      const compressed    = await resizedImage.saveAsync({
-        compress: 0.88,
-        format: SaveFormat.JPEG,
-      });
-
-      setPhotoUri(compressed.uri);
-      await sendToBackend(compressed.uri);
+      // Step 2 — Resize + encode via shared helper (1280 px, 0.88 quality)
+      const compressedUri = await compressImage(photo.uri);
+      setPhotoUri(compressedUri);
+      await sendToBackend(compressedUri);
     } catch (err: unknown) {
       Alert.alert(
         "Capture failed",
