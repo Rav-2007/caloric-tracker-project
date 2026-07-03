@@ -86,7 +86,7 @@ export interface PremiumProfileCardProps {
  * shadowRadius on iOS and elevation on Android carry the glow outward.
  * Combined they produce a radial falloff from rgba(16,185,129,0.18) → 0.
  */
-function AmbientBloom() {
+const AmbientBloom = React.memo(function AmbientBloom() {
   return (
     <View style={styles.bloomAnchor} pointerEvents="none">
       {BLOOM_LAYERS.map(({ size, opacity, blur }, i) => (
@@ -112,7 +112,7 @@ function AmbientBloom() {
       ))}
     </View>
   );
-}
+});
 
 // ─── Pulsing gradient avatar ring ────────────────────────────────────────────
 /**

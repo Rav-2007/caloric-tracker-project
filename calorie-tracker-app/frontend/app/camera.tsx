@@ -173,12 +173,12 @@ function ScannerLine({ active }: { active: boolean }) {
     return () => loop.stop();
   }, [active, scanAnim]);
 
+  if (!active) return null;
+
   const translateY = scanAnim.interpolate({
     inputRange:  [0, 1],
     outputRange: [-SCAN_CLIP_H / 2, SCAN_CLIP_H / 2],
   });
-
-  if (!active) return null;
 
   return (
     // Clipping container — scanner bar is invisible outside the ring
@@ -210,6 +210,18 @@ function PermissionGate({ onRequest }: { onRequest: () => void }) {
   );
 }
 
+// Module-level constant — not recreated on each ModeSelector render
+const CAMERA_MODES: {
+  id: CameraMode;
+  label: string;
+  Icon: React.ComponentType<{ size: number; color: string; strokeWidth: number }>;
+}[] = [
+  { id: "scan",    label: "Scan Food",   Icon: Sparkles  },
+  { id: "barcode", label: "Barcode",     Icon: QrCode    },
+  { id: "label",   label: "Food label",  Icon: Tag       },
+  { id: "gallery", label: "Gallery",     Icon: ImageIcon },
+];
+
 /** Glassmorphism horizontal mode pill — Scan Food / Barcode / Food label / Gallery */
 function ModeSelector({
   active,
@@ -218,12 +230,6 @@ function ModeSelector({
   active: CameraMode;
   onSelect: (m: CameraMode) => void;
 }) {
-  const MODES: { id: CameraMode; label: string; Icon: React.ComponentType<{ size: number; color: string; strokeWidth: number }> }[] = [
-    { id: "scan",    label: "Scan Food",   Icon: Sparkles  },
-    { id: "barcode", label: "Barcode",     Icon: QrCode    },
-    { id: "label",   label: "Food label",  Icon: Tag       },
-    { id: "gallery", label: "Gallery",     Icon: ImageIcon },
-  ];
 
   return (
     <View style={styles.modeSelectorWrap}>
@@ -232,7 +238,7 @@ function ModeSelector({
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.modeSelectorContent}
       >
-        {MODES.map(({ id, label, Icon }) => {
+        {CAMERA_MODES.map(({ id, label, Icon }) => {
           const isActive = active === id;
           return (
             <TouchableOpacity

@@ -1,6 +1,7 @@
-import React, { useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Animated,
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -9,26 +10,39 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Svg, { Circle, Defs, G, LinearGradient, Rect, Stop } from "react-native-svg";
+import Svg, {
+  Circle,
+  Defs,
+  G,
+  LinearGradient,
+  Rect,
+  Stop,
+} from "react-native-svg";
 import {
-  BarChart2,
-  BookOpen,
-  Camera,
   ChevronRight,
   Flame,
   History,
-  Home,
-  MoreHorizontal,
-  User,
+  Plus,
+  ShieldCheck,
+  TrendingUp,
+  X,
 } from "lucide-react-native";
-import { PremiumProfileCard } from "@/components/PremiumProfileCard";
+import { FloatingNav } from "@/components/FloatingNav";
 
 // ─── Design tokens ───────────────────────────────────────────────────────────
-const OFF_WHITE  = "#F8FAFC";
-const SKY_BLUE   = "#55CDFC";
-const CHARCOAL   = "#0F172A";
-const SLATE_GRAY = "#64748B";
-const SCAN_BTN_SIZE = 60;
+const BG       = "#F8F9FA";
+const SKY      = "#55CDFC";
+const CHARCOAL = "#1A1D20";
+const MUTED    = "#94A3B8";
+const WHITE    = "#FFFFFF";
+
+const CARD_SHADOW = {
+  shadowColor:   "#000",
+  shadowOffset:  { width: 0, height: 4 },
+  shadowOpacity: 0.07,
+  shadowRadius:  16,
+  elevation:     6,
+} as const;
 
 // ─── Calorie budget ──────────────────────────────────────────────────────────
 const TARGET_KCAL    = 2500;
@@ -46,196 +60,488 @@ const RING_OFFSET    = CIRCUMFERENCE * (1 - REMAINING_FRAC);
 const PCT_DISPLAY    = Math.floor(REMAINING_FRAC * 100);
 
 // ─── Static data ─────────────────────────────────────────────────────────────
-interface MacroData {
-  label: string;
-  current: number;
-  target: number;
-  unit: string;
-  pct: number;
-  color: string;
-}
+const HEALTH_SCORE = 7.8;
+const STREAK       = 21;
+const TREND_7      = [false, false, false, false, false, false, true];
 
-interface MealEntry {
-  emoji: string;
-  name: string;
-  mealType: string;
-  kcal: number;
-}
-
-const MACROS: MacroData[] = [
-  { label: "Protein", current: 112, target: 160, unit: "g", pct: 70, color: "#F97316" },
-  { label: "Carbs",   current: 182, target: 250, unit: "g", pct: 73, color: "#55CDFC" },
-  { label: "Fats",    current: 58,  target: 70,  unit: "g", pct: 83, color: "#F59E0B" },
+const MACROS = [
+  { label: "Protein", val: 112, target: 160, unit: "g", pct: 0.70, color: "#F97316", remaining: 48 },
+  { label: "Carbs",   val: 182, target: 250, unit: "g", pct: 0.73, color: "#0EA5E9", remaining: 68 },
+  { label: "Fats",    val: 58,  target: 70,  unit: "g", pct: 0.83, color: "#F59E0B", remaining: 12 },
 ];
 
-const MEALS: MealEntry[] = [
-  { emoji: "🥘", name: "Masala Dosa + Chutney",       mealType: "Breakfast", kcal: 380 },
-  { emoji: "🍛", name: "Paneer Butter Masala + Roti", mealType: "Lunch",     kcal: 470 },
+const SCANS = [
+  { emoji: "🥘", name: "Masala Dosa",          mealType: "Breakfast", time: "8:30", kcal: 380, from: "#FEF3C7", to: "#FDE68A" },
+  { emoji: "🍛", name: "Paneer Butter Masala",  mealType: "Lunch",     time: "1:15", kcal: 470, from: "#DCFCE7", to: "#BBF7D0" },
 ];
 
-// ─── Header Avatar (light-theme) ─────────────────────────────────────────────
-function HeaderAvatar() {
-  return (
-    <View style={styles.avatarWrap}>
-      <User size={20} color={SKY_BLUE} strokeWidth={2} />
-    </View>
-  );
-}
+// ─── AvatarWithRing ───────────────────────────────────────────────────────────
+function AvatarWithRing() {
+  const spin = useRef(new Animated.Value(0)).current;
 
-// ─── Macro Card (white surface) ──────────────────────────────────────────────
-function MacroCard({ label, current, target, unit, pct, color }: MacroData) {
-  return (
-    <View style={styles.macroCard}>
-      <View style={[styles.macroIcon, { backgroundColor: `${color}18` }]}>
-        <Text style={[styles.macroIconLetter, { color }]}>{label[0]}</Text>
-      </View>
-      <Text style={styles.macroLabel}>{label}</Text>
-      <Text style={styles.macroNumber}>
-        {current}
-        <Text style={styles.macroUnit}> {unit}</Text>
-      </Text>
-      <Text style={styles.macroTarget}>/ {target} {unit}</Text>
-      <View style={styles.macroTrack}>
-        <View style={[styles.macroFill, { width: `${pct}%`, backgroundColor: color }]} />
-      </View>
-      <Text style={[styles.macroPct, { color }]}>{pct}%</Text>
-    </View>
-  );
-}
+  useEffect(() => {
+    Animated.loop(
+      Animated.timing(spin, { toValue: 1, duration: 5000, useNativeDriver: true }),
+    ).start();
+  }, []);
 
-// ─── Meal Row ────────────────────────────────────────────────────────────────
-function MealRow({ emoji, name, mealType, kcal }: MealEntry) {
+  const rotate = spin.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] });
+
   return (
-    <View style={styles.mealRow}>
-      <View style={styles.mealEmojiBox}>
-        <Text style={styles.mealEmoji}>{emoji}</Text>
-      </View>
-      <View style={styles.mealInfo}>
-        <Text style={styles.mealName} numberOfLines={1}>{name}</Text>
-        <Text style={styles.mealType}>{mealType}</Text>
-      </View>
-      <View style={styles.mealKcalCol}>
-        <Text style={styles.mealKcal}>{kcal}</Text>
-        <Text style={styles.mealKcalUnit}>kcal</Text>
+    <View style={av.wrap}>
+      <Animated.View style={[StyleSheet.absoluteFill, { transform: [{ rotate }] }]}>
+        <Svg width={52} height={52} viewBox="0 0 52 52">
+          <Defs>
+            <LinearGradient id="avRingG" x1="0%" y1="0%" x2="100%" y2="100%">
+              <Stop offset="0%"   stopColor="#55CDFC" />
+              <Stop offset="28%"  stopColor="#F97316" />
+              <Stop offset="58%"  stopColor="#34D399" />
+              <Stop offset="100%" stopColor="#A78BFA" />
+            </LinearGradient>
+          </Defs>
+          <Circle cx={26} cy={26} r={24} stroke="url(#avRingG)" strokeWidth={2.5} fill="none" />
+        </Svg>
+      </Animated.View>
+      <View style={av.inner}>
+        <Text style={av.initials}>RK</Text>
       </View>
     </View>
   );
 }
 
-// ─── Tab item ────────────────────────────────────────────────────────────────
-function TabItem({
-  icon,
-  label,
-  active = false,
-}: {
-  icon: (color: string) => React.ReactNode;
-  label: string;
-  active?: boolean;
-}) {
-  const color = active ? SKY_BLUE : SLATE_GRAY;
+const av = StyleSheet.create({
+  wrap:     { width: 52, height: 52, alignItems: "center", justifyContent: "center" },
+  inner:    { position: "absolute", width: 44, height: 44, borderRadius: 22, backgroundColor: SKY, alignItems: "center", justifyContent: "center" },
+  initials: { fontSize: 14, fontWeight: "800", color: WHITE, letterSpacing: -0.3 },
+});
+
+// ─── HealthScoreCard ──────────────────────────────────────────────────────────
+function HealthScoreCard() {
+  const s     = HEALTH_SCORE;
+  const color = s >= 9 ? "#0D9488" : s >= 7 ? "#22C55E" : s >= 4 ? "#EAB308" : "#EF4444";
+  const label = s >= 9
+    ? "Optimal — Peak Performance! 🎯"
+    : s >= 7
+    ? "Healthy — Great work, Ravi! 💪"
+    : "Moderate — Keep pushing forward";
+
   return (
-    <TouchableOpacity style={styles.tabItem} activeOpacity={0.7}>
-      {icon(color)}
-      <Text style={[styles.tabLabel, { color }]}>{label}</Text>
-    </TouchableOpacity>
+    <View style={[hsc.card, CARD_SHADOW]}>
+      {/* Score row */}
+      <View style={hsc.top}>
+        <View style={{ flex: 1 }}>
+          <Text style={hsc.heading}>Health Score</Text>
+          <Text style={hsc.sub}>{label}</Text>
+        </View>
+        <View style={hsc.numRow}>
+          <Text style={[hsc.num, { color }]}>{s.toFixed(1)}</Text>
+          <Text style={hsc.den}>/10</Text>
+        </View>
+      </View>
+
+      {/* 7-day trend squares */}
+      <Text style={hsc.trendTitle}>7-Day Trend</Text>
+      <View style={hsc.trendRow}>
+        {TREND_7.map((on, i) => (
+          <View
+            key={i}
+            style={[
+              hsc.sq,
+              on && { backgroundColor: color, shadowColor: color, shadowOpacity: 0.4, shadowRadius: 5, elevation: 3 },
+            ]}
+          />
+        ))}
+      </View>
+
+      {/* Streak footer */}
+      <View style={hsc.foot}>
+        <Text style={hsc.footLabel}>Current Streak</Text>
+        <View style={hsc.footRight}>
+          <Flame size={12} color="#F97316" fill="#F97316" />
+          <Text style={hsc.streak}>{STREAK} days</Text>
+        </View>
+      </View>
+    </View>
   );
 }
 
-// ─── Premium Tab Bar ─────────────────────────────────────────────────────────
-function PremiumTabBar({ onScan }: { onScan: () => void }) {
-  const insets   = useSafeAreaInsets();
-  const btnScale = useRef(new Animated.Value(1)).current;
+const hsc = StyleSheet.create({
+  card:       { backgroundColor: WHITE, borderRadius: 24, padding: 20, gap: 12, borderWidth: 1, borderColor: "rgba(0,0,0,0.04)" },
+  top:        { flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  heading:    { fontSize: 11, fontWeight: "700", color: MUTED, letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 5 },
+  sub:        { fontSize: 13, fontWeight: "500", color: CHARCOAL, lineHeight: 19 },
+  numRow:     { flexDirection: "row", alignItems: "baseline", gap: 1 },
+  num:        { fontSize: 44, fontWeight: "800", letterSpacing: -2.5, lineHeight: 48 },
+  den:        { fontSize: 13, fontWeight: "500", color: MUTED },
+  trendTitle: { fontSize: 10, fontWeight: "700", color: MUTED, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: -4 },
+  trendRow:   { flexDirection: "row", gap: 5 },
+  sq:         { flex: 1, height: 26, borderRadius: 6, backgroundColor: "#EEF2FF" },
+  foot:       { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  footLabel:  { fontSize: 10, fontWeight: "600", color: MUTED },
+  footRight:  { flexDirection: "row", alignItems: "center", gap: 4 },
+  streak:     { fontSize: 12, fontWeight: "700", color: "#F97316" },
+});
 
-  const onPressIn  = () =>
-    Animated.spring(btnScale, { toValue: 0.90, useNativeDriver: true, speed: 60, bounciness: 6 }).start();
-  const onPressOut = () =>
-    Animated.spring(btnScale, { toValue: 1,    useNativeDriver: true, speed: 30, bounciness: 14 }).start();
+// ─── MacroStrip ───────────────────────────────────────────────────────────────
+function MacroStrip() {
+  const barAnims = useRef(MACROS.map(() => new Animated.Value(0))).current;
+
+  useEffect(() => {
+    Animated.parallel(
+      MACROS.map((m, i) =>
+        Animated.timing(barAnims[i], {
+          toValue:         1,
+          duration:        1300,
+          delay:           800 + i * 140,
+          useNativeDriver: false,
+        }),
+      ),
+    ).start();
+  }, []);
 
   return (
-    <View style={[styles.tabBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-      <TabItem
-        icon={(c) => <Home size={22} color={c} strokeWidth={2} />}
-        label="Home"
-        active
+    <View style={[ms.card, CARD_SHADOW]}>
+      {MACROS.map((m, i) => (
+        <React.Fragment key={m.label}>
+          {i > 0 && <View style={ms.divider} />}
+          <View style={ms.col}>
+            <Text style={ms.label}>{m.label}</Text>
+            <Text style={ms.val}>
+              {m.val}
+              <Text style={ms.unit}>{m.unit}</Text>
+            </Text>
+            <View style={ms.track}>
+              <Animated.View
+                style={[
+                  ms.fill,
+                  {
+                    width: barAnims[i].interpolate({
+                      inputRange:  [0, 1],
+                      outputRange: ["0%", `${Math.round(m.pct * 100)}%`],
+                    }),
+                    backgroundColor: m.color,
+                  },
+                ]}
+              />
+            </View>
+            <Text style={[ms.rem, { color: m.color }]}>
+              {m.remaining}{m.unit} left
+            </Text>
+          </View>
+        </React.Fragment>
+      ))}
+    </View>
+  );
+}
+
+const ms = StyleSheet.create({
+  card:    { backgroundColor: WHITE, borderRadius: 20, padding: 18, flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: "rgba(0,0,0,0.04)" },
+  col:     { flex: 1, alignItems: "center", gap: 5 },
+  divider: { width: 1, alignSelf: "stretch", backgroundColor: "rgba(0,0,0,0.07)", marginHorizontal: 2 },
+  label:   { fontSize: 10, fontWeight: "700", color: MUTED, letterSpacing: 0.4, textTransform: "uppercase" },
+  val:     { fontSize: 20, fontWeight: "800", color: CHARCOAL, letterSpacing: -0.8 },
+  unit:    { fontSize: 11, fontWeight: "500" },
+  track:   { width: "82%", height: 5, borderRadius: 10, backgroundColor: "#EEF2FF", overflow: "hidden" },
+  fill:    { height: "100%", borderRadius: 10 },
+  rem:     { fontSize: 10, fontWeight: "600" },
+});
+
+// ─── ScanCarousel ─────────────────────────────────────────────────────────────
+function ScanCarousel({ onAdd }: { onAdd: () => void }) {
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={sc.row}
+    >
+      {SCANS.map((item) => (
+        <View key={item.name} style={[sc.card, { backgroundColor: item.from }, CARD_SHADOW]}>
+          <Text style={sc.emoji}>{item.emoji}</Text>
+          <Text style={sc.name} numberOfLines={2}>{item.name}</Text>
+          <Text style={sc.meta}>{item.mealType}  •  {item.time}</Text>
+          <View style={sc.kcalRow}>
+            <Text style={sc.kcal}>{item.kcal}</Text>
+            <Text style={sc.kcalU}>kcal</Text>
+          </View>
+        </View>
+      ))}
+
+      {/* Add scan button */}
+      <TouchableOpacity style={sc.addCard} onPress={onAdd} activeOpacity={0.75}>
+        <View style={sc.addCircle}>
+          <Plus size={20} color={SKY} strokeWidth={2.5} />
+        </View>
+        <Text style={sc.addLabel}>{"Scan\nFood"}</Text>
+      </TouchableOpacity>
+    </ScrollView>
+  );
+}
+
+const sc = StyleSheet.create({
+  row:      { paddingHorizontal: 20, gap: 12, paddingVertical: 4 },
+  card:     { width: 142, borderRadius: 20, padding: 14, gap: 4 },
+  emoji:    { fontSize: 30 },
+  name:     { fontSize: 13, fontWeight: "700", color: CHARCOAL, lineHeight: 18, marginTop: 4 },
+  meta:     { fontSize: 10, fontWeight: "500", color: MUTED },
+  kcalRow:  { flexDirection: "row", alignItems: "baseline", gap: 2, marginTop: 4 },
+  kcal:     { fontSize: 20, fontWeight: "800", color: CHARCOAL, letterSpacing: -0.8 },
+  kcalU:    { fontSize: 10, fontWeight: "600", color: MUTED },
+  addCard:  { width: 100, minHeight: 130, borderRadius: 20, borderWidth: 2, borderColor: "rgba(85,205,252,0.35)", borderStyle: "dashed", alignItems: "center", justifyContent: "center", gap: 8 },
+  addCircle: { width: 40, height: 40, borderRadius: 20, backgroundColor: "rgba(85,205,252,0.12)", alignItems: "center", justifyContent: "center" },
+  addLabel: { fontSize: 12, fontWeight: "700", color: SKY, textAlign: "center", lineHeight: 18 },
+});
+
+// ─── Profile bottom sheet ─────────────────────────────────────────────────────
+const XP_CURRENT = 2340;
+const XP_NEXT    = 3000;
+const XP_LABEL   = "Health Champion";
+
+function XpBar() {
+  const pct  = XP_CURRENT / XP_NEXT;
+  const fill = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(fill, { toValue: pct, duration: 900, delay: 200, useNativeDriver: false }).start();
+  }, []);
+  return (
+    <View style={pb.xpTrack}>
+      <Animated.View
+        style={[
+          pb.xpFill,
+          { width: fill.interpolate({ inputRange: [0, 1], outputRange: ["0%", "100%"] }) },
+        ]}
       />
-      <TabItem
-        icon={(c) => <BookOpen size={22} color={c} strokeWidth={2} />}
-        label="Diary"
-      />
+    </View>
+  );
+}
 
-      {/* Central floating scan button */}
-      <View style={styles.tabCenterSlot}>
-        <Animated.View style={{ transform: [{ scale: btnScale }] }}>
-          <TouchableOpacity
-            style={styles.scanBtn}
-            activeOpacity={1}
-            onPressIn={onPressIn}
-            onPressOut={onPressOut}
-            onPress={onScan}
-          >
-            <Camera size={26} color="#FFFFFF" strokeWidth={2} />
+function ProfileSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  const sheetInsets = useSafeAreaInsets();
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      statusBarTranslucent
+      onRequestClose={onClose}
+    >
+      {/* Backdrop */}
+      <TouchableOpacity style={pb.backdrop} activeOpacity={1} onPress={onClose} />
+
+      {/* Sheet */}
+      <View style={[pb.sheet, { paddingBottom: Math.max(sheetInsets.bottom, 24) }]}>
+        {/* Handle + close */}
+        <View style={pb.handleRow}>
+          <View style={pb.handle} />
+          <TouchableOpacity onPress={onClose} style={pb.closeBtn} activeOpacity={0.75}>
+            <X size={16} color={CHARCOAL} strokeWidth={2.5} />
           </TouchableOpacity>
-        </Animated.View>
-      </View>
+        </View>
 
-      <TabItem
-        icon={(c) => <BarChart2 size={22} color={c} strokeWidth={2} />}
-        label="Progress"
-      />
-      <TabItem
-        icon={(c) => <MoreHorizontal size={22} color={c} strokeWidth={2} />}
-        label="More"
-      />
-    </View>
+        {/* Avatar + name */}
+        <View style={pb.avatarRow}>
+          <View style={pb.avatarCircle}>
+            <Text style={pb.avatarInitials}>RK</Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={pb.nameText}>Ravi Kumar</Text>
+            <View style={pb.tierRow}>
+              <ShieldCheck size={10} color={SKY} strokeWidth={2.5} />
+              <Text style={pb.tierText}>SWASTH PRO</Text>
+              <Text style={pb.tierDot}>·</Text>
+              <Text style={pb.tierText}>LVL 8</Text>
+            </View>
+            <Text style={pb.streakSub}>21-day streak · June 2026</Text>
+          </View>
+        </View>
+
+        <View style={pb.divider} />
+
+        {/* Level progress */}
+        <View style={pb.section}>
+          <View style={pb.sectionHeader}>
+            <Text style={pb.sectionLabel}>LEVEL PROGRESS</Text>
+            <Text style={pb.xpNum}>{XP_CURRENT.toLocaleString()} / {XP_NEXT.toLocaleString()} XP</Text>
+          </View>
+          <XpBar />
+          <Text style={pb.xpSub}>
+            {(XP_NEXT - XP_CURRENT).toLocaleString()} XP to Level 9 — {XP_LABEL}
+          </Text>
+        </View>
+
+        {/* Day streak */}
+        <View style={[pb.section, pb.streakSection]}>
+          <View style={pb.sectionHeader}>
+            <Text style={pb.sectionLabel}>DAY STREAK</Text>
+            <Text style={pb.streakSub2}>Personal best</Text>
+          </View>
+          <View style={pb.streakRow}>
+            <View style={pb.streakBig}>
+              <Text style={pb.streakNum}>21</Text>
+              <Flame size={22} color="#F97316" fill="#F97316" />
+            </View>
+            <View style={pb.streakChips}>
+              <View style={[pb.chip, { backgroundColor: "#FEF3C7" }]}>
+                <Text style={[pb.chipTxt, { color: "#F97316" }]}>🏆 Personal best</Text>
+              </View>
+              <View style={[pb.chip, { backgroundColor: "#DCFCE7" }]}>
+                <TrendingUp size={10} color="#22C55E" strokeWidth={2.5} />
+                <Text style={[pb.chipTxt, { color: "#22C55E" }]}>+3 this week</Text>
+              </View>
+            </View>
+          </View>
+        </View>
+
+        {/* Stats grid */}
+        <View style={pb.statsGrid}>
+          {/* Health score */}
+          <View style={[pb.statCard, { flex: 1.2 }]}>
+            <Text style={pb.statLabel}>HEALTH SCORE</Text>
+            <Text style={[pb.statBig, { color: "#22C55E" }]}>7.5</Text>
+            <Text style={pb.statSub}>out of 10</Text>
+            <View style={[pb.statBlob, { backgroundColor: "rgba(34,197,94,0.12)" }]} />
+          </View>
+          <View style={pb.statsRight}>
+            {/* Calories */}
+            <View style={pb.statCard}>
+              <Text style={pb.statLabel}>CALORIES</Text>
+              <Text style={[pb.statBig, { color: "#0EA5E9", fontSize: 22 }]}>{CONSUMED_KCAL}</Text>
+              <Text style={pb.statSub}>of {TARGET_KCAL.toLocaleString()}</Text>
+              <View style={[pb.statBlob, { backgroundColor: "rgba(14,165,233,0.12)" }]} />
+            </View>
+            {/* Weight */}
+            <View style={pb.statCard}>
+              <Text style={pb.statLabel}>WEIGHT</Text>
+              <View style={{ flexDirection: "row", alignItems: "baseline", gap: 1 }}>
+                <Text style={[pb.statBig, { color: "#22C55E", fontSize: 22 }]}>72</Text>
+                <Text style={[pb.statSub, { marginBottom: 2 }]}>kg</Text>
+              </View>
+              <Text style={pb.statSub}>−0.8 kg week</Text>
+              <View style={[pb.statBlob, { backgroundColor: "rgba(34,197,94,0.12)" }]} />
+            </View>
+          </View>
+        </View>
+
+        {/* Score scale bar */}
+        <View style={pb.scaleRow}>
+          <Text style={pb.scaleLabel}>HEALTH SCORE SCALE</Text>
+          <Text style={[pb.scaleBig, { color: "#22C55E" }]}>7.5 <Text style={pb.scaleDen}>/10</Text></Text>
+        </View>
+        <View style={pb.scaleBar}>
+          {["#EF4444","#F97316","#EAB308","#22C55E","#0D9488"].map((c, i) => (
+            <View key={i} style={[pb.scaleSegment, { backgroundColor: c }]} />
+          ))}
+          <View style={[pb.scaleDot, { left: `${(7.5 / 10) * 100}%` as any }]} />
+        </View>
+      </View>
+    </Modal>
   );
 }
 
-// ─── Screen ──────────────────────────────────────────────────────────────────
+const pb = StyleSheet.create({
+  backdrop:       { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.45)" },
+  sheet:          { position: "absolute", bottom: 0, left: 0, right: 0, backgroundColor: WHITE, borderTopLeftRadius: 32, borderTopRightRadius: 32, paddingHorizontal: 20, paddingTop: 12 },
+  handleRow:      { flexDirection: "row", alignItems: "center", justifyContent: "center", marginBottom: 16 },
+  handle:         { width: 36, height: 4, borderRadius: 2, backgroundColor: "#E2E8F0" },
+  closeBtn:       { position: "absolute", right: 0, width: 32, height: 32, borderRadius: 16, backgroundColor: "#F1F5F9", alignItems: "center", justifyContent: "center" },
+  avatarRow:      { flexDirection: "row", alignItems: "center", gap: 14, marginBottom: 16 },
+  avatarCircle:   { width: 56, height: 56, borderRadius: 28, backgroundColor: SKY, alignItems: "center", justifyContent: "center", borderWidth: 3, borderColor: "rgba(85,205,252,0.3)" },
+  avatarInitials: { fontSize: 20, fontWeight: "800", color: WHITE },
+  nameText:       { fontSize: 18, fontWeight: "800", color: CHARCOAL, letterSpacing: -0.4 },
+  tierRow:        { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 3 },
+  tierText:       { fontSize: 10, fontWeight: "700", color: SKY, letterSpacing: 0.3 },
+  tierDot:        { fontSize: 10, color: MUTED },
+  streakSub:      { fontSize: 11, fontWeight: "500", color: MUTED, marginTop: 3 },
+  divider:        { height: 1, backgroundColor: "#F1F5F9", marginBottom: 16 },
+  section:        { marginBottom: 16 },
+  sectionHeader:  { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
+  sectionLabel:   { fontSize: 9, fontWeight: "700", color: MUTED, letterSpacing: 0.8 },
+  xpNum:          { fontSize: 11, fontWeight: "700", color: CHARCOAL },
+  xpTrack:        { height: 6, backgroundColor: "#EEF2FF", borderRadius: 3, overflow: "hidden" },
+  xpFill:         { height: 6, borderRadius: 3, backgroundColor: SKY },
+  xpSub:          { fontSize: 10, fontWeight: "500", color: MUTED, marginTop: 5 },
+  streakSection:  { backgroundColor: "#FAFBFF", borderRadius: 18, padding: 14 },
+  streakRow:      { flexDirection: "row", alignItems: "center", gap: 12 },
+  streakBig:      { flexDirection: "row", alignItems: "center", gap: 4 },
+  streakNum:      { fontSize: 40, fontWeight: "900", color: "#F97316", letterSpacing: -2 },
+  streakChips:    { flex: 1, gap: 6 },
+  chip:           { flexDirection: "row", alignItems: "center", gap: 5, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 5, alignSelf: "flex-start" },
+  chipTxt:        { fontSize: 11, fontWeight: "700" },
+  streakSub2:     { fontSize: 10, fontWeight: "600", color: "#F97316" },
+  statsGrid:      { flexDirection: "row", gap: 10, marginBottom: 14 },
+  statsRight:     { flex: 1, gap: 10 },
+  statCard:       { backgroundColor: "#F8FAFF", borderRadius: 18, padding: 14, overflow: "hidden" },
+  statLabel:      { fontSize: 8, fontWeight: "700", color: MUTED, letterSpacing: 0.8, marginBottom: 4 },
+  statBig:        { fontSize: 28, fontWeight: "900", letterSpacing: -1.5, lineHeight: 30 },
+  statSub:        { fontSize: 10, fontWeight: "500", color: MUTED },
+  statBlob:       { position: "absolute", width: 80, height: 80, borderRadius: 40, right: -20, top: -20 },
+  scaleRow:       { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
+  scaleLabel:     { fontSize: 9, fontWeight: "700", color: MUTED, letterSpacing: 0.8 },
+  scaleBig:       { fontSize: 16, fontWeight: "800", letterSpacing: -0.5 },
+  scaleDen:       { fontSize: 11, fontWeight: "500", color: MUTED },
+  scaleBar:       { height: 8, borderRadius: 4, flexDirection: "row", overflow: "hidden", marginBottom: 4, position: "relative" },
+  scaleSegment:   { flex: 1 },
+  scaleDot:       { position: "absolute", top: -3, width: 14, height: 14, borderRadius: 7, backgroundColor: WHITE, borderWidth: 2.5, borderColor: "#22C55E", marginLeft: -7 },
+});
+
+// ─── Screen ───────────────────────────────────────────────────────────────────
 export default function HomeScreen() {
-  const router = useRouter();
-  const insets = useSafeAreaInsets();
+  const router  = useRouter();
+  const insets  = useSafeAreaInsets();
+  const shimmer = useRef(new Animated.Value(0)).current;
+  const [showProfile, setShowProfile] = useState(false);
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(shimmer, { toValue: 1, duration: 3000, useNativeDriver: true }),
+        Animated.timing(shimmer, { toValue: 0, duration: 0,    useNativeDriver: true }),
+      ]),
+    ).start();
+  }, []);
+
+  const shimmerX = shimmer.interpolate({
+    inputRange:  [0, 1],
+    outputRange: [-300, 500],
+  });
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <ScrollView
-        contentContainerStyle={[styles.scroll, { paddingBottom: 20 }]}
-        style={styles.scrollFlex}
+        contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
       >
-        {/* ── Header ──────────────────────────────────────────────────── */}
+        {/* ── Header ─────────────────────────────────────────────── */}
         <View style={styles.header}>
           <View style={styles.headerLeft}>
-            <HeaderAvatar />
+            <TouchableOpacity onPress={() => setShowProfile(true)} activeOpacity={0.8}>
+              <AvatarWithRing />
+            </TouchableOpacity>
             <View>
               <Text style={styles.greeting}>Namaste, Ravi! 🙏</Text>
-              <Text style={styles.headerSub}>Swasth Profile</Text>
+              <View style={styles.badgeRow}>
+                <ShieldCheck size={10} color={SKY} strokeWidth={2.5} />
+                <Text style={styles.badge}>SWASTH PRO</Text>
+                <View style={styles.streakPill}>
+                  <Flame size={9} color="#F97316" fill="#F97316" />
+                  <Text style={styles.streakText}>{STREAK}d streak</Text>
+                </View>
+              </View>
             </View>
           </View>
-          <TouchableOpacity style={styles.historyBadge} activeOpacity={0.75}>
-            <History size={13} color={SKY_BLUE} strokeWidth={2} />
-            <Text style={styles.historyText}>Scan History</Text>
+          <TouchableOpacity style={styles.historyBtn} activeOpacity={0.75}>
+            <History size={13} color={SKY} strokeWidth={2} />
+            <Text style={styles.historyTxt}>History</Text>
           </TouchableOpacity>
         </View>
 
-        {/* ── Premium Profile Card ─────────────────────────────────────── */}
-        <View style={styles.cardRow}>
-          <PremiumProfileCard
-            name="Ravi Kumar"
-            avatarInitials="RK"
-            streak={21}
-            targetCalories={TARGET_KCAL}
-            consumedCalories={CONSUMED_KCAL}
-            tier="Swasth Pro"
-            weightKg={72}
-            protein={MACROS[0].current}
-            carbs={MACROS[1].current}
-            fats={MACROS[2].current}
-          />
+        {/* ── Health Score ───────────────────────────────────────── */}
+        <View style={styles.padH}>
+          <HealthScoreCard />
         </View>
 
-        {/* ── Hero Gradient Calorie Card ───────────────────────────────── */}
-        <View style={styles.heroCard}>
-          {/* Sky→Azure gradient fill */}
+        {/* ── Hero Calorie Card ──────────────────────────────────── */}
+        <View style={[styles.heroCard, CARD_SHADOW]}>
+          {/* Gradient background */}
           <Svg
             width="100%"
             height="100%"
@@ -245,462 +551,133 @@ export default function HomeScreen() {
           >
             <Defs>
               <LinearGradient id="heroGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                <Stop offset="0%"   stopColor="#55CDFC" stopOpacity="1" />
-                <Stop offset="100%" stopColor="#38BDF8" stopOpacity="1" />
+                <Stop offset="0%"   stopColor="#55CDFC" />
+                <Stop offset="100%" stopColor="#38BDF8" />
               </LinearGradient>
             </Defs>
             <Rect x={0} y={0} width={100} height={100} fill="url(#heroGrad)" />
           </Svg>
 
-          {/* Top row: metrics left, ring right */}
+          {/* Shimmer stripe */}
+          <Animated.View
+            style={[styles.shimmer, { transform: [{ translateX: shimmerX }] }]}
+            pointerEvents="none"
+          />
+
+          {/* Content */}
           <View style={styles.heroBody}>
             <View style={styles.heroLeft}>
               <View style={styles.heroLabelRow}>
                 <Flame size={14} color="rgba(255,255,255,0.85)" strokeWidth={2} />
-                <Text style={styles.heroLabelText}>Calories Left</Text>
+                <Text style={styles.heroLabelTxt}>Calories Left</Text>
               </View>
-              <Text style={styles.heroNumber}>{REMAINING_KCAL.toLocaleString()}</Text>
-              <Text style={styles.heroKcalUnit}>kcal left</Text>
+              <Text style={styles.heroNum}>{REMAINING_KCAL.toLocaleString()}</Text>
+              <Text style={styles.heroUnit}>kcal remaining</Text>
+              <Text style={styles.heroBurn}>🔥 {CONSUMED_KCAL} consumed today</Text>
             </View>
 
-            <View style={styles.heroRingWrap}>
+            <View style={styles.ringWrap}>
               <Svg width={RING_SIZE} height={RING_SIZE} viewBox={`0 0 ${RING_SIZE} ${RING_SIZE}`}>
-                {/* Track */}
                 <Circle
                   cx={RING_CENTER} cy={RING_CENTER} r={RING_RADIUS}
-                  stroke="rgba(255,255,255,0.25)"
-                  strokeWidth={STROKE_WIDTH}
-                  fill="none"
+                  stroke="rgba(255,255,255,0.25)" strokeWidth={STROKE_WIDTH} fill="none"
                 />
-                {/* Progress arc — starts at 12 o'clock */}
                 <G transform={`rotate(-90, ${RING_CENTER}, ${RING_CENTER})`}>
                   <Circle
                     cx={RING_CENTER} cy={RING_CENTER} r={RING_RADIUS}
-                    stroke="#FFFFFF"
-                    strokeWidth={STROKE_WIDTH}
-                    fill="none"
+                    stroke="#FFFFFF" strokeWidth={STROKE_WIDTH} fill="none"
                     strokeDasharray={String(CIRCUMFERENCE)}
                     strokeDashoffset={RING_OFFSET}
                     strokeLinecap="round"
                   />
                 </G>
               </Svg>
-              <View style={styles.heroRingOverlay}>
-                <Text style={styles.heroRingPct}>{PCT_DISPLAY}%</Text>
-                <Text style={styles.heroRingGoal}>of daily goal</Text>
+              <View style={styles.ringOverlay}>
+                <Text style={styles.ringPct}>{PCT_DISPLAY}%</Text>
+                <Text style={styles.ringGoal}>of goal</Text>
               </View>
             </View>
           </View>
 
-          {/* Progress pill — bleeds to card edges */}
           <TouchableOpacity style={styles.heroPill} activeOpacity={0.85}>
-            <Text style={styles.heroPillText}>
-              {CONSUMED_KCAL.toLocaleString()} / {TARGET_KCAL.toLocaleString()} kcal consumed
+            <Text style={styles.heroPillTxt}>
+              {CONSUMED_KCAL} / {TARGET_KCAL} kcal consumed
             </Text>
             <ChevronRight size={14} color="rgba(255,255,255,0.75)" strokeWidth={2.5} />
           </TouchableOpacity>
         </View>
 
-        {/* ── Macros ──────────────────────────────────────────────────── */}
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Macros</Text>
-          <TouchableOpacity>
-            <Text style={styles.sectionLink}>View Details ›</Text>
+        {/* ── Macros ─────────────────────────────────────────────── */}
+        <View style={styles.sectionRow}>
+          <Text style={styles.sectionTitle}>Macros Today</Text>
+          <TouchableOpacity activeOpacity={0.7}>
+            <Text style={styles.sectionLink}>Details ›</Text>
           </TouchableOpacity>
         </View>
-        <View style={styles.macroRow}>
-          {MACROS.map((m) => (
-            <MacroCard key={m.label} {...m} />
-          ))}
+        <View style={styles.padH}>
+          <MacroStrip />
         </View>
 
-        {/* ── Meal Log ────────────────────────────────────────────────── */}
-        <View style={styles.mealCard}>
-          <View style={styles.mealCardHeader}>
-            <Text style={styles.mealCardTitle}>Today's Swasth Scans</Text>
-            <View style={styles.mealCountBadge}>
-              <Text style={styles.mealCountText}>{MEALS.length}</Text>
-            </View>
+        {/* ── Today's Scans ──────────────────────────────────────── */}
+        <View style={styles.sectionRow}>
+          <Text style={styles.sectionTitle}>Today's Scans</Text>
+          <View style={styles.badge2}>
+            <Text style={styles.badge2Txt}>{SCANS.length}</Text>
           </View>
-          {MEALS.map((meal, i) => (
-            <React.Fragment key={meal.name}>
-              <MealRow {...meal} />
-              {i < MEALS.length - 1 && <View style={styles.mealDivider} />}
-            </React.Fragment>
-          ))}
         </View>
+        <ScanCarousel onAdd={() => router.push("/camera")} />
       </ScrollView>
 
-      <PremiumTabBar onScan={() => router.push("/camera")} />
+      <ProfileSheet visible={showProfile} onClose={() => setShowProfile(false)} />
+
+      <FloatingNav
+        active="home"
+        onHome={() => {}}
+        onProgress={() => router.push("/progress")}
+        onDiary={() => router.push("/diary")}
+        onCamera={() => router.push("/camera")}
+      />
     </View>
   );
 }
 
-// ─── Shared card shadow ───────────────────────────────────────────────────────
-const CARD_SHADOW = {
-  shadowColor: SLATE_GRAY,
-  shadowOffset: { width: 0, height: 4 },
-  shadowOpacity: 0.10,
-  shadowRadius: 12,
-  elevation: 4,
-} as const;
-
-// ─── Styles ──────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  root:       { flex: 1, backgroundColor: OFF_WHITE },
-  scrollFlex: { flex: 1 },
-  scroll: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    gap: 16,
-  },
-  cardRow: { alignItems: "center" },
+  root:   { flex: 1, backgroundColor: BG },
+  scroll: { paddingBottom: 120, gap: 0 },
+  padH:   { paddingHorizontal: 20 },
 
-  // ── Header ─────────────────────────────────────────────────────────────────
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  headerLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  avatarWrap: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: `${SKY_BLUE}18`,
-    borderWidth: 1.5,
-    borderColor: `${SKY_BLUE}50`,
-  },
-  greeting: {
-    fontSize: 17,
-    fontWeight: "700",
-    color: CHARCOAL,
-    letterSpacing: -0.3,
-  },
-  headerSub: {
-    fontSize: 12,
-    color: SLATE_GRAY,
-    fontWeight: "500",
-    marginTop: 1,
-  },
-  historyBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    backgroundColor: `${SKY_BLUE}14`,
-    borderWidth: 1,
-    borderColor: `${SKY_BLUE}40`,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-  },
-  historyText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: SKY_BLUE,
-  },
+  // Header
+  header:      { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingVertical: 16 },
+  headerLeft:  { flexDirection: "row", alignItems: "center", gap: 12 },
+  greeting:    { fontSize: 16, fontWeight: "800", color: CHARCOAL, letterSpacing: -0.3 },
+  badgeRow:    { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 3 },
+  badge:       { fontSize: 9, fontWeight: "800", color: SKY, letterSpacing: 0.6 },
+  streakPill:  { flexDirection: "row", alignItems: "center", gap: 3, backgroundColor: "#FFF7ED", borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 },
+  streakText:  { fontSize: 9, fontWeight: "700", color: "#F97316" },
+  historyBtn:  { flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: WHITE, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 7, ...CARD_SHADOW },
+  historyTxt:  { fontSize: 11, fontWeight: "700", color: SKY },
 
-  // ── Hero Gradient Card ─────────────────────────────────────────────────────
-  heroCard: {
-    borderRadius: 24,
-    overflow: "hidden",
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    shadowColor: "#38BDF8",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.25,
-    shadowRadius: 16,
-    elevation: 10,
-  },
-  heroBody: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingBottom: 16,
-  },
-  heroLeft: {
-    flex: 1,
-    gap: 2,
-  },
-  heroLabelRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 6,
-  },
-  heroLabelText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "rgba(255,255,255,0.85)",
-  },
-  heroNumber: {
-    fontSize: 52,
-    fontWeight: "800",
-    color: "#FFFFFF",
-    letterSpacing: -2.5,
-    lineHeight: 56,
-  },
-  heroKcalUnit: {
-    fontSize: 14,
-    fontWeight: "500",
-    color: "rgba(255,255,255,0.75)",
-    marginTop: 2,
-  },
-  heroRingWrap: {
-    width: RING_SIZE,
-    height: RING_SIZE,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  heroRingOverlay: {
-    position: "absolute",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  heroRingPct: {
-    fontSize: 22,
-    fontWeight: "800",
-    color: "#FFFFFF",
-    letterSpacing: -0.5,
-  },
-  heroRingGoal: {
-    fontSize: 10,
-    fontWeight: "500",
-    color: "rgba(255,255,255,0.80)",
-    textAlign: "center",
-    marginTop: 1,
-  },
-  // Negative horizontal margins bleed through padding to reach card edges;
-  // overflow:hidden on heroCard clips corners cleanly.
-  heroPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "rgba(255,255,255,0.22)",
-    marginHorizontal: -20,
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-  },
-  heroPillText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "rgba(255,255,255,0.90)",
-  },
+  // Hero card
+  heroCard:     { marginHorizontal: 20, marginTop: 16, marginBottom: 0, borderRadius: 28, overflow: "hidden", minHeight: 178 },
+  shimmer:      { position: "absolute", top: 0, bottom: 0, width: 80, backgroundColor: "rgba(255,255,255,0.18)", transform: [{ skewX: "-15deg" }] },
+  heroBody:     { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 24, paddingTop: 22, paddingBottom: 12 },
+  heroLeft:     { flex: 1, gap: 2 },
+  heroLabelRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 4 },
+  heroLabelTxt: { fontSize: 13, fontWeight: "600", color: "rgba(255,255,255,0.85)" },
+  heroNum:      { fontSize: 52, fontWeight: "900", color: WHITE, letterSpacing: -3, lineHeight: 54 },
+  heroUnit:     { fontSize: 13, fontWeight: "500", color: "rgba(255,255,255,0.7)" },
+  heroBurn:     { fontSize: 11, fontWeight: "500", color: "rgba(255,255,255,0.65)", marginTop: 5 },
+  ringWrap:     { width: RING_SIZE, height: RING_SIZE, alignItems: "center", justifyContent: "center" },
+  ringOverlay:  { position: "absolute", alignItems: "center" },
+  ringPct:      { fontSize: 22, fontWeight: "800", color: WHITE, letterSpacing: -1 },
+  ringGoal:     { fontSize: 9,  fontWeight: "600", color: "rgba(255,255,255,0.7)" },
+  heroPill:     { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: "rgba(0,0,0,0.1)", marginHorizontal: 16, marginBottom: 16, borderRadius: 16, paddingVertical: 10, paddingHorizontal: 16 },
+  heroPillTxt:  { fontSize: 12, fontWeight: "600", color: "rgba(255,255,255,0.9)" },
 
-  // ── Section header ─────────────────────────────────────────────────────────
-  sectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: -4,
-  },
-  sectionTitle: {
-    fontSize: 17,
-    fontWeight: "700",
-    color: CHARCOAL,
-    letterSpacing: -0.3,
-  },
-  sectionLink: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: SKY_BLUE,
-  },
-
-  // ── Macro Row — white surface cards ───────────────────────────────────────
-  macroRow: {
-    flexDirection: "row",
-    gap: 10,
-  },
-  macroCard: {
-    flex: 1,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 24,
-    padding: 14,
-    gap: 4,
-    ...CARD_SHADOW,
-  },
-  macroIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 2,
-  },
-  macroIconLetter: {
-    fontSize: 13,
-    fontWeight: "800",
-  },
-  macroLabel: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: SLATE_GRAY,
-  },
-  macroNumber: {
-    fontSize: 22,
-    fontWeight: "800",
-    color: CHARCOAL,
-    letterSpacing: -0.5,
-    lineHeight: 26,
-  },
-  macroUnit: {
-    fontSize: 12,
-    fontWeight: "500",
-    color: SLATE_GRAY,
-  },
-  macroTarget: {
-    fontSize: 11,
-    fontWeight: "500",
-    color: SLATE_GRAY,
-  },
-  macroTrack: {
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: "#F1F5F9",
-    overflow: "hidden",
-    marginTop: 2,
-  },
-  macroFill: {
-    height: "100%",
-    borderRadius: 2,
-  },
-  macroPct: {
-    fontSize: 11,
-    fontWeight: "700",
-    textAlign: "right",
-  },
-
-  // ── Meal Card — white surface ──────────────────────────────────────────────
-  mealCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 24,
-    paddingVertical: 18,
-    paddingHorizontal: 16,
-    gap: 4,
-    ...CARD_SHADOW,
-  },
-  mealCardHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 10,
-  },
-  mealCardTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: CHARCOAL,
-    letterSpacing: -0.2,
-  },
-  mealCountBadge: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: `${SKY_BLUE}20`,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  mealCountText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: SKY_BLUE,
-  },
-  mealRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingVertical: 8,
-  },
-  mealEmojiBox: {
-    width: 46,
-    height: 46,
-    borderRadius: 14,
-    backgroundColor: OFF_WHITE,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  mealEmoji:    { fontSize: 22 },
-  mealInfo:     { flex: 1, gap: 3 },
-  mealName: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: CHARCOAL,
-  },
-  mealType: {
-    fontSize: 12,
-    color: SLATE_GRAY,
-  },
-  mealKcalCol: {
-    alignItems: "flex-end",
-    gap: 1,
-  },
-  mealKcal: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#059669",
-    letterSpacing: -0.5,
-  },
-  mealKcalUnit: {
-    fontSize: 10,
-    fontWeight: "500",
-    color: SLATE_GRAY,
-  },
-  mealDivider: {
-    height: 1,
-    backgroundColor: "#F1F5F9",
-    marginLeft: 58,
-  },
-
-  // ── Premium Tab Bar ────────────────────────────────────────────────────────
-  tabBar: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    backgroundColor: "#FFFFFF",
-    borderTopWidth: 0.5,
-    borderTopColor: "#E2E8F0",
-    paddingTop: 10,
-    paddingHorizontal: 4,
-    // Lift bar above scroll content on iOS
-    shadowColor: "#64748B",
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  tabItem: {
-    flex: 1,
-    alignItems: "center",
-    gap: 3,
-    paddingBottom: 4,
-  },
-  tabLabel: {
-    fontSize: 11,
-    fontWeight: "600",
-    letterSpacing: 0.1,
-  },
-  tabCenterSlot: {
-    flex: 1,
-    alignItems: "center",
-  },
-  // Floats SCAN_BTN_SIZE px circle upward so half sits above the bar edge
-  scanBtn: {
-    width: SCAN_BTN_SIZE,
-    height: SCAN_BTN_SIZE,
-    borderRadius: SCAN_BTN_SIZE / 2,
-    backgroundColor: SKY_BLUE,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: -(SCAN_BTN_SIZE / 2),
-    shadowColor: SKY_BLUE,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.50,
-    shadowRadius: 14,
-    elevation: 12,
-  },
+  // Section headers
+  sectionRow:   { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, marginTop: 20, marginBottom: 12 },
+  sectionTitle: { fontSize: 16, fontWeight: "800", color: CHARCOAL, letterSpacing: -0.3 },
+  sectionLink:  { fontSize: 12, fontWeight: "600", color: SKY },
+  badge2:       { backgroundColor: SKY, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 },
+  badge2Txt:    { fontSize: 11, fontWeight: "700", color: WHITE },
 });

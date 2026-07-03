@@ -25,6 +25,7 @@ export default function RootLayout() {
         <Stack.Screen name="index" />
         <Stack.Screen name="camera" />
         <Stack.Screen name="review" />
+        <Stack.Screen name="progress" />
       </Stack>
     </SafeAreaProvider>
   );

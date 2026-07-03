@@ -161,7 +161,7 @@ interface ItemCardProps {
   onGramsChange: (g: number) => void;
 }
 
-const ItemAdjustCard = React.memo(({ item, grams, accent, onGramsChange }: ItemCardProps) => {
+const ItemAdjustCard = React.memo(function ItemAdjustCard({ item, grams, accent, onGramsChange }: ItemCardProps) {
   const scale   = item.estimated_grams > 0 ? grams / item.estimated_grams : 1;
   const liveCal = Math.round(item.calories  * scale);
   const livePro = (item.protein_g * scale).toFixed(1);
@@ -231,7 +231,7 @@ export default function ReviewScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  const result: FoodAnalysisResult = React.useMemo(() => {
+  const result: FoodAnalysisResult = useMemo(() => {
     try {
       return JSON.parse(data ?? "{}");
     } catch {
