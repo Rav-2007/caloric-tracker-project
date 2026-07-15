@@ -8,17 +8,21 @@ from contextlib import asynccontextmanager
 from typing import Literal
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import SQLAlchemyError
 
-from database import engine, get_async_db
+from database import async_session, engine
 from models import MealScan
-from nutrition import resolve_nutrition_batch
+from nutrition import (
+    load_nutrition_cache,
+    nutrition_cache_refresher,
+    resolve_nutrition_batch,
+)
 
 load_dotenv()
 
@@ -33,7 +37,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 MODEL_ID = "gemini-2.5-flash"
-REQUEST_TIMEOUT_SECONDS = 60
+# With thinking disabled (see GenerateContentConfig below) Gemini answers a
+# single-image extraction in ~2–5 s; 30 s is a generous ceiling that still
+# fails fast enough for a mobile client waiting on a spinner.
+REQUEST_TIMEOUT_SECONDS = 30
 MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB
 
 ALLOWED_MIME_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
@@ -183,15 +190,17 @@ async def lifespan(app: FastAPI):
             "GEMINI_API_KEY is not set. Copy .env.example → .env and fill in the key."
         )
 
-    # Establish the async DB engine and warm the connection pool.
-    # Acquiring one connection here proves DATABASE_URL is reachable before
-    # the server begins accepting requests — a misconfigured URL fails loud
-    # at startup rather than silently at the first DB query.
-    async with engine.connect() as probe:
-        await probe.run_sync(lambda _: None)  # lightweight round-trip
+    # Load the ICMR-NIN reference table into memory. This doubles as the DB
+    # reachability probe — a misconfigured DATABASE_URL fails loud at startup
+    # rather than silently at the first background write.
+    cache_count = await load_nutrition_cache()
+
+    # Keep the cache fresh without touching the request hot path.
+    refresh_task = asyncio.create_task(nutrition_cache_refresher())
 
     logger.info(
-        "Startup complete. DB pool ready. Model=%s, timeout=%ds",
+        "Startup complete. Nutrition cache=%d entries. Model=%s, timeout=%ds",
+        cache_count,
         MODEL_ID,
         REQUEST_TIMEOUT_SECONDS,
     )
@@ -199,6 +208,12 @@ async def lifespan(app: FastAPI):
     yield
 
     # ── Shutdown ─────────────────────────────────────────────────────────────
+    refresh_task.cancel()
+    try:
+        await refresh_task
+    except asyncio.CancelledError:
+        pass
+
     # Gracefully close every connection in the pool and cancel pending
     # checkouts before the process exits. Skipping this leaves TCP handles
     # open on the Supabase side until their idle-timeout fires.
@@ -221,6 +236,10 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+# Compress JSON responses over ~1 KB — multi-item analysis payloads shrink
+# ~4–5× on the wire, which matters on mobile hotspot links.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 # Client is created at module level — no network call happens here.
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
@@ -283,6 +302,24 @@ def _validate_image(content_type: str | None, data: bytes) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Background persistence
+# ---------------------------------------------------------------------------
+async def _persist_scan(scan: MealScan) -> None:
+    """
+    Write the scan record after the response has been sent.  The client
+    already has its analysis result, so a history-write failure is logged
+    for ops rather than surfaced as a 5xx.
+    """
+    try:
+        async with async_session() as session:
+            session.add(scan)
+            await session.commit()
+        logger.info("Scan persisted: db_id=%s", scan.id)
+    except SQLAlchemyError:
+        logger.exception("Background persist failed for '%s'", scan.filename)
+
+
+# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 @app.get("/health", tags=["ops"])
@@ -303,8 +340,8 @@ async def health_check():
     ),
 )
 async def analyze_food(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="Photo of the food plate"),
-    db: AsyncSession = Depends(get_async_db),
 ) -> FoodAnalysisResult:
 
     # 1. Read the uploaded bytes
@@ -344,6 +381,9 @@ async def analyze_food(
     # 4. Call Gemini with structured output, bounded by a hard timeout.
     #    response_schema uses _GeminiResult (visual fields only) so Gemini is
     #    never asked to fabricate macro values — that is handled locally below.
+    #    thinking_budget=0 disables 2.5 Flash's default dynamic thinking:
+    #    single-image structured extraction gains nothing from it, and it
+    #    typically doubles both latency and output-token cost.
     try:
         response = await asyncio.wait_for(
             gemini_client.aio.models.generate_content(
@@ -354,6 +394,7 @@ async def analyze_food(
                     response_mime_type="application/json",
                     response_schema=_GeminiResult,
                     temperature=0.2,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
                 ),
             ),
             timeout=REQUEST_TIMEOUT_SECONDS,
@@ -404,11 +445,10 @@ async def analyze_food(
             ),
         )
 
-    # 7. Enrich every item with ICMR-NIN macros — one batched DB round-trip
-    #    for all items rather than N sequential queries.
-    nutrition_results = await resolve_nutrition_batch(
+    # 7. Enrich every item with ICMR-NIN macros — pure in-memory lookup
+    #    against the startup-loaded reference cache; no DB round-trip.
+    nutrition_results = resolve_nutrition_batch(
         [(raw.item_name, raw.estimated_grams) for raw in gemini_result.food_items],
-        db,
     )
     enriched: list[FoodItem] = [
         FoodItem(
@@ -449,11 +489,11 @@ async def analyze_food(
         result.total_fat_g,
     )
 
-    # 8. Persist scan to DB (fully non-blocking — all I/O awaited) ─────────────
-    try:
-        # INSERT: add the record and flush so the server-generated PK is populated.
-        # The actual COMMIT is deferred to get_async_db once the route returns normally.
-        scan = MealScan(
+    # 8. Persist scan to DB *after* the response is sent — the mobile client
+    #    is not kept waiting on Supabase round-trips it doesn't need.
+    background_tasks.add_task(
+        _persist_scan,
+        MealScan(
             filename=file.filename,
             image_size_bytes=len(image_bytes),
             total_calories=result.total_calories,
@@ -463,24 +503,7 @@ async def analyze_food(
             item_count=len(enriched),
             icmr_matched_count=icmr_matched,
             food_items_json=[item.model_dump() for item in enriched],
-        )
-        db.add(scan)
-        await db.flush()
-        logger.info("Scan persisted: db_id=%d", scan.id)
-
-    except HTTPException:
-        raise  # Let 4xx business-logic errors pass through unmodified
-    except IntegrityError as exc:
-        logger.warning("DB integrity error for '%s': %s", file.filename, exc.orig)
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Data integrity error while saving the scan result. Please retry.",
-        ) from exc
-    except SQLAlchemyError as exc:
-        logger.exception("DB error while persisting scan for '%s': %s", file.filename, exc)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="A database error occurred while saving the scan. Please try again later.",
-        ) from exc
+        ),
+    )
 
     return result

@@ -20,7 +20,7 @@ import {
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
-import { ArrowLeft, CheckCircle, RefreshCw, Zap } from "lucide-react-native";
+import { ArrowLeft, CheckCircle, RefreshCw, Zap } from "@/components/icons";
 import { Colors, alpha } from "@/constants/colors";
 
 // ─── Design tokens ───────────────────────────────────────────────────────────

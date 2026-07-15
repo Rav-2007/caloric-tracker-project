@@ -23,7 +23,7 @@ import {
   ViewStyle,
 } from "react-native";
 import Svg, { Circle, Defs, LinearGradient, Rect, Stop } from "react-native-svg";
-import { Flame, Leaf, ShieldCheck } from "lucide-react-native";
+import { Flame, Leaf, ShieldCheck } from "@/components/icons";
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const CARD_W = 340;

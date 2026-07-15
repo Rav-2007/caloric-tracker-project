@@ -18,7 +18,7 @@ import {
   Sun,
   Sunset,
   UtensilsCrossed,
-} from "lucide-react-native";
+} from "@/components/icons";
 import { FloatingNav } from "@/components/FloatingNav";
 
 // ─── Design tokens ───────────────────────────────────────────────────────────

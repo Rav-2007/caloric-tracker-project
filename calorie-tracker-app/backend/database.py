@@ -39,10 +39,12 @@ if not _DATABASE_URL.startswith("postgresql+asyncpg://"):
 engine = create_async_engine(
     _DATABASE_URL,
     # ── Pool sizing ──────────────────────────────────────────────────────────
-    # Total max connections = pool_size + max_overflow = 30.
-    # Supabase free tier allows 60; adjust both values for larger tiers.
-    pool_size=20,       # persistent connections kept alive in the pool
-    max_overflow=10,    # extra connections allowed during traffic spikes
+    # The request hot path never touches the DB (nutrition lookups are served
+    # from an in-memory cache); connections are only used by post-response
+    # scan writes and the periodic cache refresh. Total max = 10, well under
+    # the Supabase free-tier 60-connection cap.
+    pool_size=5,        # persistent connections kept alive in the pool
+    max_overflow=5,     # extra connections allowed during write bursts
     # ── Pool durability ─────────────────────────────────────────────────────
     pool_recycle=1800,  # recycle connections every 30 min — prevents stale
                         # TCP handles and serverside idle-timeout disconnects

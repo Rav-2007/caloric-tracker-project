@@ -26,7 +26,7 @@ import {
   ShieldCheck,
   TrendingUp,
   X,
-} from "lucide-react-native";
+} from "@/components/icons";
 import { FloatingNav } from "@/components/FloatingNav";
 
 // ─── Design tokens ───────────────────────────────────────────────────────────

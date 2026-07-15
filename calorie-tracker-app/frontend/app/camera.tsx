@@ -46,14 +46,16 @@ import {
   Tag,
   X,
   Zap,
-} from "lucide-react-native";
+} from "@/components/icons";
 import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
 import { Colors, alpha } from "@/constants/colors";
 
 // ─── 2. Config ───────────────────────────────────────────────────────────────
-const API_URL = "http://10.82.194.56:8000";
-const NETWORK_TIMEOUT_MS = 70_000;
+// Override per machine/network without a code edit:  EXPO_PUBLIC_API_URL=http://<ip>:8000 npx expo start
+const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://10.82.194.56:8000";
+// Server aborts Gemini at 30 s; 40 s here leaves headroom for the upload leg.
+const NETWORK_TIMEOUT_MS = 40_000;
 
 // L-bracket framing guide geometry (70% screen width, 60% screen height)
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
@@ -104,12 +106,15 @@ interface FoodAnalysisResult {
 
 /**
  * Single-pass resize + JPEG encode shared by the camera shutter and gallery picker.
- * 1280 px wide at 0.88 quality → ~420–660 KB, sharp enough for Gemini dish ID.
+ * 768 px wide at 0.80 quality → ~120–250 KB. Chosen deliberately: Gemini
+ * tokenizes images in 768×768 tiles, so 768 px wide lands on 1–2 tiles
+ * instead of 4 at 1280 px — ~2–4× cheaper and faster per scan — while a
+ * plate-sized subject stays easily identifiable at this resolution.
  */
 async function compressImage(uri: string): Promise<string> {
   const ctx     = ImageManipulator.manipulate(uri);
-  const resized = await ctx.resize({ width: 1280 }).renderAsync();
-  const out     = await resized.saveAsync({ compress: 0.88, format: SaveFormat.JPEG });
+  const resized = await ctx.resize({ width: 768 }).renderAsync();
+  const out     = await resized.saveAsync({ compress: 0.8, format: SaveFormat.JPEG });
   return out.uri;
 }
 
@@ -629,11 +634,12 @@ export default function CameraScreen() {
     if (!cameraRef.current || isCapturing) return;
     setIsCapturing(true);
     try {
-      // Step 1 — Capture at full sensor quality (no first-pass JPEG encode).
-      const photo = await cameraRef.current.takePictureAsync({ quality: 1.0 });
+      // Step 1 — Capture. quality 0.85 halves the intermediate file write on
+      // a 12 MP sensor; invisible after the 768 px downscale that follows.
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.85 });
       if (!photo) return;
 
-      // Step 2 — Resize + encode via shared helper (1280 px, 0.88 quality)
+      // Step 2 — Resize + encode via shared helper (768 px, 0.80 quality)
       const compressedUri = await compressImage(photo.uri);
       setPhotoUri(compressedUri);
       await sendToBackend(compressedUri);

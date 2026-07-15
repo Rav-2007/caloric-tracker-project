@@ -20,7 +20,7 @@ import {
   Camera,
   Home,
   MoreHorizontal,
-} from "lucide-react-native";
+} from "@/components/icons";
 
 const SKY  = "#55CDFC";
 const MUTED = "#94A3B8";
