@@ -1,4 +1,4 @@
-/**
+  /**
  * camera.tsx — Full pipeline: capture → compress → upload → results
  *
  * Sections (in order):
@@ -9,7 +9,7 @@
  *  5. Atomic sub-components: ThaliGuideRing, ScannerLine, PermissionGate
  *  6. Pipeline sub-components: LoadingOverlay, NetworkErrorCard
  *  7. Results sub-components: MacroBar, FoodItemCard, ResultsDashboard
- *  8. Main CameraScreen
+ *  8. Main CameraScreens
  *  9. StyleSheet (one block, no inline objects in JSX)
  */
 
@@ -29,7 +29,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { CameraView, CameraType, useCameraPermissions } from "expo-camera";
-import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
+import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import {
   AlertTriangle,
@@ -50,10 +50,9 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
 import { Colors, alpha } from "@/constants/colors";
+import { API_URL, authHeaders } from "@/constants/api";
 
 // ─── 2. Config ───────────────────────────────────────────────────────────────
-// Override per machine/network without a code edit:  EXPO_PUBLIC_API_URL=http://<ip>:8000 npx expo start
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://10.82.194.56:8000";
 // Server aborts Gemini at 30 s; 40 s here leaves headroom for the upload leg.
 const NETWORK_TIMEOUT_MS = 40_000;
 
@@ -112,10 +111,12 @@ interface FoodAnalysisResult {
  * plate-sized subject stays easily identifiable at this resolution.
  */
 async function compressImage(uri: string): Promise<string> {
-  const ctx     = ImageManipulator.manipulate(uri);
-  const resized = await ctx.resize({ width: 768 }).renderAsync();
-  const out     = await resized.saveAsync({ compress: 0.8, format: SaveFormat.JPEG });
-  return out.uri;
+  const result = await manipulateAsync(
+    uri,
+    [{ resize: { width: 768 } }],
+    { compress: 0.8, format: SaveFormat.JPEG },
+  );
+  return result.uri;
 }
 
 function avgConfidence(items: FoodItem[]): number {
@@ -564,14 +565,17 @@ export default function CameraScreen() {
 
     try {
       const formData = new FormData();
-      // Unique timestamped filename per submission — prevents the backend's
-      // 30-second dedup check from blocking a second scan taken within that window.
+      // Timestamped filename keeps server-side audit/log rows unique per
+      // submission. Note the backend's 30 s dedup guard keys on a hash of the
+      // image *bytes*, not this filename — so two genuinely different photos
+      // are never blocked, and identical retaken bytes are still de-duplicated.
       const filename = `meal_${Date.now()}.jpg`;
       formData.append("file", { uri, name: filename, type: "image/jpeg" } as unknown as Blob);
 
       const response = await fetch(`${API_URL}/api/v1/analyze-food`, {
         method: "POST",
         body: formData,
+        headers: authHeaders(),
         signal: controller.signal,
       });
 
@@ -626,8 +630,21 @@ export default function CameraScreen() {
   }, [isCapturing, sendToBackend]);
 
   const handleModeSelect = useCallback((mode: CameraMode) => {
+    if (mode === "gallery") {
+      // Gallery is an action, not a persistent mode — keep the pill on "Scan".
+      setCameraMode("scan");
+      pickAndAnalyze();
+      return;
+    }
+    if (mode === "barcode" || mode === "label") {
+      // Not wired up yet — be honest rather than silently doing nothing.
+      Alert.alert(
+        "Coming soon",
+        "Barcode and food-label scanning aren't available yet. Use Scan Food to photograph and analyze a plate.",
+      );
+      return;
+    }
     setCameraMode(mode);
-    if (mode === "gallery") pickAndAnalyze();
   }, [pickAndAnalyze]);
 
   const processAndAnalyze = useCallback(async () => {
@@ -654,7 +671,14 @@ export default function CameraScreen() {
   }, [isCapturing, sendToBackend]);
 
   // ── Guards ───────────────────────────────────────────────────────────────
-  if (!permission)         return <View style={styles.blank} />;
+  // permission can be null (loading), false (denied), or true (granted)
+  if (permission === null) {
+    return (
+      <View style={styles.blank}>
+        <ActivityIndicator size="large" color={ICE} />
+      </View>
+    );
+  }
   if (!permission.granted) return <PermissionGate onRequest={requestPermission} />;
 
   if (analysisResult && photoUri) {
@@ -769,7 +793,7 @@ export default function CameraScreen() {
 
 // ─── 9. StyleSheet ────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  blank: { flex: 1, backgroundColor: Colors.slate900 },
+  blank: { flex: 1, backgroundColor: Colors.slate900, alignItems: "center", justifyContent: "center" },
 
   // Camera screen shell
   root:    { flex: 1, backgroundColor: Colors.slate900 },

@@ -5,9 +5,9 @@
 --
 -- This file is the single source of truth for the production DDL.
 -- Every column, type, constraint, and index mirrors the SQLAlchemy ORM models
--- in backend/models.py (MealScan and ICMRFoodReference) exactly, so that
--- Alembic autogenerate produces no diff against a database created from this
--- file.
+-- in backend/models.py (MealScan, ICMRFoodReference, LoggedMeal, PlannedMeal,
+-- UserProfile) exactly, so that Alembic autogenerate produces no diff against a
+-- database created from this file.
 --
 -- Run order matters — no cross-table foreign keys exist yet, so either table
 -- can be created first.  Run this entire file in the Supabase SQL Editor or
@@ -31,7 +31,9 @@ CREATE TABLE IF NOT EXISTS meal_scans (
     -- Timestamp (timezone-aware); indexed for time-range dashboard queries
     created_at          TIMESTAMPTZ         NOT NULL DEFAULT now(),
 
-    -- Original multipart filename; used for 30-second duplicate-upload guard
+    -- Original multipart filename; stored for audit/logging only.
+    -- (The 30-second duplicate-upload guard keys on a SHA-256 of the image
+    --  bytes held in the app process — not on this column.)
     filename            VARCHAR(255)        NULL,
 
     -- Raw upload size in bytes
@@ -102,3 +104,99 @@ CREATE TABLE IF NOT EXISTS icmr_food_references (
 
 -- No separate index needed: the UNIQUE constraint above implicitly creates
 -- a B-Tree index on food_key that PostgreSQL uses for IN (...) lookups.
+
+
+-- ---------------------------------------------------------------------------
+-- Table: logged_meals
+--
+-- A user-confirmed diary entry, written by POST /api/v1/log-meal after the
+-- reviewed / portion-adjusted items from the review screen are saved. Distinct
+-- from meal_scans (which stores the raw AI estimate at scan time): logged_meals
+-- holds the final, user-adjusted portions that power the diary and the today /
+-- date-range summaries. food_items_json stores the full per-item payload as
+-- JSONB so historical records stay queryable without a separate items table.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS logged_meals (
+
+    -- Identity
+    id                  BIGSERIAL           PRIMARY KEY,
+
+    -- Timestamp (timezone-aware); indexed for date-bucketed diary queries
+    logged_at           TIMESTAMPTZ         NOT NULL DEFAULT now(),
+
+    -- Diary bucket: 'Breakfast', 'Lunch', 'Snacks', or 'Dinner'
+    meal_type           VARCHAR(20)         NOT NULL,
+
+    -- Aggregate macro totals (post user-adjustment, denormalised for fast reads)
+    total_calories      DOUBLE PRECISION    NOT NULL,
+    total_protein_g     DOUBLE PRECISION    NOT NULL,
+    total_carbs_g       DOUBLE PRECISION    NOT NULL,
+    total_fat_g         DOUBLE PRECISION    NOT NULL,
+
+    -- Full per-item payload (post user-adjustment)
+    food_items_json     JSONB               NOT NULL
+
+);
+
+-- B-Tree index on logged_at — speeds up the diary's per-day filter and the
+-- today / date-range summary aggregations. Name matches the SQLAlchemy
+-- index=True default (ix_logged_meals_logged_at) so autogenerate emits no diff.
+CREATE INDEX IF NOT EXISTS ix_logged_meals_logged_at
+    ON logged_meals (logged_at);
+
+
+-- ---------------------------------------------------------------------------
+-- Table: planned_meals
+--
+-- A meal the user intends to eat on an upcoming date (Phase A meal planning).
+-- Editable/swappable until reconciled; POST /api/v1/planned-meals/{id}/log
+-- converts it into a logged_meals row (status → 'logged', logged_meal_id set).
+-- items_json mirrors the enriched per-item shape used elsewhere.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS planned_meals (
+
+    -- Identity
+    id                  BIGSERIAL           PRIMARY KEY,
+    created_at          TIMESTAMPTZ         NOT NULL DEFAULT now(),
+
+    -- When the meal is planned for; indexed for per-day lookups
+    scheduled_for       TIMESTAMPTZ         NOT NULL,
+
+    -- Diary bucket: 'Breakfast', 'Lunch', 'Snacks', or 'Dinner'
+    meal_type           VARCHAR(20)         NOT NULL,
+
+    -- Full per-item payload: [{item_name, grams, calories, protein_g, …}, …]
+    items_json          JSONB               NOT NULL,
+
+    -- Optional local reminder time (Phase B — notifications); NULL = none
+    reminder_at         TIMESTAMPTZ         NULL,
+
+    -- Lifecycle: 'planned' | 'logged' | 'skipped'
+    status              VARCHAR(12)         NOT NULL DEFAULT 'planned',
+
+    -- Set when converted into an actual logged meal
+    logged_meal_id      BIGINT              NULL
+
+);
+
+-- B-Tree index on scheduled_for — matches the SQLAlchemy index=True default
+-- name so Alembic autogenerate emits no diff.
+CREATE INDEX IF NOT EXISTS ix_planned_meals_scheduled_for
+    ON planned_meals (scheduled_for);
+
+
+-- ---------------------------------------------------------------------------
+-- Table: user_profiles
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS user_profiles (
+    id                  BIGSERIAL           PRIMARY KEY,
+    updated_at          TIMESTAMPTZ         NOT NULL DEFAULT now(),
+    name                VARCHAR(120)        NOT NULL DEFAULT 'User',
+    age                 INTEGER             NULL,
+    weight_kg           DOUBLE PRECISION    NULL,
+    height_cm           DOUBLE PRECISION    NULL,
+    calorie_target      INTEGER             NOT NULL DEFAULT 2000,
+    protein_target_g    INTEGER             NOT NULL DEFAULT 120,
+    carbs_target_g      INTEGER             NOT NULL DEFAULT 250,
+    fat_target_g        INTEGER             NOT NULL DEFAULT 65
+);

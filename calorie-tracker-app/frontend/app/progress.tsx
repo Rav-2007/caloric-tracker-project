@@ -9,7 +9,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, {
   Circle,
@@ -29,9 +29,12 @@ import {
   Zap,
 } from "@/components/icons";
 import { FloatingNav } from "@/components/FloatingNav";
+import { apiFetch } from "@/constants/api";
+import type { LoggedMeal, MealsListResponse } from "@/types/api";
+import { toDateParam } from "@/types/api";
 
 // ─── Design tokens ───────────────────────────────────────────────────────────
-const BG       = "#F8F9FA";
+const BG       = "#F8FAFC";
 const SKY      = "#55CDFC";
 const CHARCOAL = "#1A1D20";
 const MUTED    = "#94A3B8";
@@ -90,29 +93,7 @@ const JOURNEY = {
 const WEEK_LABELS = ["Wk 1", "Wk 2", "Wk 3", "Wk 4"];
 
 // ─── Meal data ────────────────────────────────────────────────────────────────
-interface MealEntry {
-  id: string;
-  emoji: string;
-  name: string;
-  mealType: string;
-  kcal: number;
-}
-const SAMPLE_MEALS: Record<string, MealEntry[]> = {
-  "2026-06-20": [
-    { id: "m1", emoji: "🥘", name: "Masala Dosa",          mealType: "Breakfast", kcal: 380 },
-    { id: "m2", emoji: "🍛", name: "Paneer Butter Masala", mealType: "Lunch",     kcal: 470 },
-  ],
-  "2026-06-22": [
-    { id: "m3", emoji: "🥗", name: "Vegetable Salad",      mealType: "Lunch",     kcal: 220 },
-  ],
-  "2026-06-26": [
-    { id: "m4", emoji: "🥘", name: "Masala Dosa + Chutney",       mealType: "Breakfast", kcal: 380 },
-    { id: "m5", emoji: "🍛", name: "Paneer Butter Masala + Roti", mealType: "Lunch",     kcal: 470 },
-  ],
-  "2026-07-02": [
-    { id: "m6", emoji: "🥘", name: "Masala Dosa",          mealType: "Breakfast", kcal: 380 },
-  ],
-};
+// Replaced with live API data — see ProgressScreen state below
 
 // ─── Snack options (Activity Thread) ─────────────────────────────────────────
 const SNACK_OPTIONS = [
@@ -443,18 +424,6 @@ const sl = StyleSheet.create({
 
 // ─── AI Nutrition Insight Card ────────────────────────────────────────────────
 function AIInsightCard() {
-  const blink = useRef(new Animated.Value(1)).current;
-  useEffect(() => {
-    const anim = Animated.loop(
-      Animated.sequence([
-        Animated.timing(blink, { toValue: 0.25, duration: 650, useNativeDriver: true }),
-        Animated.timing(blink, { toValue: 1,    duration: 650, useNativeDriver: true }),
-      ]),
-    );
-    anim.start();
-    return () => anim.stop();
-  }, []);
-
   return (
     <View style={[ai.card, CARD_SHADOW]}>
       <View style={ai.hdr}>
@@ -462,9 +431,10 @@ function AIInsightCard() {
           <Text style={ai.star}>★</Text>
           <Text style={ai.label}>AI Nutrition Insight</Text>
         </View>
+        {/* Static preview content — labelled honestly, not "Live". */}
         <View style={ai.livePill}>
-          <Animated.View style={[ai.liveDot, { opacity: blink }]} />
-          <Text style={ai.liveText}>Live</Text>
+          <View style={ai.liveDot} />
+          <Text style={ai.liveText}>Sample</Text>
         </View>
       </View>
 
@@ -669,6 +639,58 @@ export default function ProgressScreen() {
   const [taggedMeals,   setTaggedMeals]   = useState<Set<string>>(new Set());
   const [waterPerDay,   setWaterPerDay]   = useState<Record<string, number>>({});
 
+  // ── Real meal data from API ──────────────────────────────────────────────────
+  // Keyed by date string YYYY-MM-DD; loaded on demand when a date is selected
+  const [mealCache, setMealCache] = useState<Record<string, LoggedMeal[]>>({});
+  const [loadingMeals, setLoadingMeals] = useState(false);
+  // Use a ref to check cache membership without adding mealCache to useCallback deps
+  // (adding it would recreate fetchMealsForDate on every fetch → infinite loop).
+  // This is intentional: the ref provides a stable reference to the latest cache state
+  // without triggering re-renders or dependency changes.
+  const mealCacheRef = useRef<Record<string, LoggedMeal[]>>({});
+
+  const fetchMealsForDate = useCallback(async (dateStr: string, force = false) => {
+    // Cheap path (mount / date-change) uses the cache; a forced refresh
+    // (on focus, after a meal is logged elsewhere) bypasses it and re-fetches.
+    if (!force && mealCacheRef.current[dateStr] !== undefined) return; // already fetched
+    setLoadingMeals(true);
+    try {
+      const res = await apiFetch(`/api/v1/meals?date=${dateStr}`);
+      if (res.ok) {
+        const data: MealsListResponse = await res.json();
+        mealCacheRef.current = { ...mealCacheRef.current, [dateStr]: data.meals };
+        setMealCache(prev => ({ ...prev, [dateStr]: data.meals }));
+      } else {
+        mealCacheRef.current = { ...mealCacheRef.current, [dateStr]: [] };
+        setMealCache(prev => ({ ...prev, [dateStr]: [] }));
+      }
+    } catch (err) {
+      // Offline or network error - cache empty array to prevent retry spam
+      console.log("[ProgressScreen] Failed to fetch meals for", dateStr, ":", err instanceof Error ? err.message : String(err));
+      mealCacheRef.current = { ...mealCacheRef.current, [dateStr]: [] };
+      setMealCache(prev => ({ ...prev, [dateStr]: [] }));
+    } finally {
+      setLoadingMeals(false);
+    }
+  }, []); // ← no mealCache dep — uses ref for cache-hit check (intentional)
+
+  // Fetch today's meals on mount
+  useEffect(() => { fetchMealsForDate(TODAY_STR); }, []);
+
+  // Fetch when selected date changes
+  useEffect(() => {
+    if (selectedDate) fetchMealsForDate(selectedDate);
+  }, [selectedDate]);
+
+  // On focus, force-refresh today + the selected date so a meal logged on
+  // another screen shows up here (day detail, monthly totals, calendar dot).
+  useFocusEffect(
+    useCallback(() => {
+      fetchMealsForDate(TODAY_STR, true);
+      if (selectedDate && selectedDate !== TODAY_STR) fetchMealsForDate(selectedDate, true);
+    }, [selectedDate, fetchMealsForDate]),
+  );
+
   // ── Calendar math ────────────────────────────────────────────────────────────
   const firstDayOfWeek = new Date(viewYear, viewMonth, 1).getDay();
   const daysInMonth    = new Date(viewYear, viewMonth + 1, 0).getDate();
@@ -712,22 +734,22 @@ export default function ProgressScreen() {
     });
   }, [selectedDate]);
 
-  const selectedMeals = useMemo(
-    () => selectedDate ? (SAMPLE_MEALS[selectedDate] ?? []) : [],
-    [selectedDate],
+  const selectedMeals: LoggedMeal[] = useMemo(
+    () => (selectedDate ? (mealCache[selectedDate] ?? []) : []),
+    [selectedDate, mealCache],
   );
   const selectedWater       = selectedDate ? (waterPerDay[selectedDate] ?? 0) : 0;
   const isSelectedImportant = selectedDate ? importantDays.has(selectedDate) : false;
 
   const aiInsight = useMemo(() => {
     if (!selectedDate) return null;
-    const meals     = SAMPLE_MEALS[selectedDate] ?? [];
-    const totalKcal = meals.reduce((s, m) => s + m.kcal, 0);
+    const meals     = mealCache[selectedDate] ?? [];
+    const totalKcal = Math.round(meals.reduce((s, m) => s + m.total_calories, 0));
     if (!meals.length)     return "No meals logged yet. Start tracking to get insights! 🌟";
     if (totalKcal > 2200)  return `High intake day — ${totalKcal} kcal. Consider a lighter dinner. 💡`;
     if (totalKcal < 800)   return "Low intake today. Make sure to hit your protein goal. 💪";
     return `Good day! ${totalKcal} kcal logged. You're on track for your goals. ✅`;
-  }, [selectedDate]);
+  }, [selectedDate, mealCache]);
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
@@ -759,6 +781,14 @@ export default function ProgressScreen() {
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
       >
+        {/* ── Sample-data disclosure ────────────────────────────────── */}
+        <View style={styles.sampleBanner}>
+          <Text style={styles.sampleBannerText}>
+            Trends, sleep &amp; coaching cards below show sample data while history
+            analytics are being wired up. Your logged meals and the calendar are live.
+          </Text>
+        </View>
+
         {/* ── Month overview card ───────────────────────────────────── */}
         <View style={[styles.overviewCard, CARD_SHADOW]}>
           {MONTH_OVERVIEW.map((o, i) => (
@@ -785,11 +815,13 @@ export default function ProgressScreen() {
           <View style={styles.calGrid}>
             {cells.map((day, idx) => {
               if (!day) return <View key={`e-${idx}`} style={styles.calCell} />;
-              const dateStr   = toDateStr(viewYear, viewMonth, day);
+              const dateStr   = toDateParam(new Date(viewYear, viewMonth, day));
               const isToday   = dateStr === TODAY_STR;
               const isSel     = dateStr === selectedDate;
               const isImp     = importantDays.has(dateStr);
-              const dotColor  = PERF[dateStr];
+              // Show green dot if we've fetched meals for this day and there are some
+              const hasMeals  = (mealCache[dateStr]?.length ?? 0) > 0;
+              const dotColor  = hasMeals ? "#22C55E" : PERF[dateStr];
 
               return (
                 <TouchableOpacity
@@ -878,20 +910,24 @@ export default function ProgressScreen() {
               <View style={[styles.mealsCard, CARD_SHADOW]}>
                 <Text style={styles.mealsTitle}>Meals Logged</Text>
                 {selectedMeals.map((meal, i) => {
-                  const isTagged = taggedMeals.has(meal.id);
+                  const isTagged  = taggedMeals.has(String(meal.id));
+                  const itemNames = (meal.food_items as any[]).map(f => f.item_name).join(", ");
+                  const MEAL_EMOJIS: Record<string, string> = {
+                    Breakfast: "🥘", Lunch: "🍛", Snacks: "🍎", Dinner: "🌙",
+                  };
                   return (
                     <View key={meal.id}>
                       {i > 0 && <View style={styles.mealDiv} />}
                       <View style={styles.mealRow}>
-                        <Text style={styles.mealEmoji}>{meal.emoji}</Text>
+                        <Text style={styles.mealEmoji}>{MEAL_EMOJIS[meal.meal_type] ?? "🍽️"}</Text>
                         <View style={styles.mealInfo}>
-                          <Text style={styles.mealName} numberOfLines={1}>{meal.name}</Text>
-                          <Text style={styles.mealType}>{meal.mealType}</Text>
+                          <Text style={styles.mealName} numberOfLines={1}>{itemNames}</Text>
+                          <Text style={styles.mealType}>{meal.meal_type}</Text>
                         </View>
-                        <Text style={styles.mealKcal}>{meal.kcal} kcal</Text>
+                        <Text style={styles.mealKcal}>{Math.round(meal.total_calories)} kcal</Text>
                         <TouchableOpacity
                           style={styles.tagBtn}
-                          onPress={() => toggleMealTag(meal.id)}
+                          onPress={() => toggleMealTag(String(meal.id))}
                           activeOpacity={0.7}
                         >
                           <Tag
@@ -908,7 +944,9 @@ export default function ProgressScreen() {
               </View>
             ) : (
               <View style={styles.emptyCard}>
-                <Text style={styles.emptyTxt}>No meals logged for this day</Text>
+                <Text style={styles.emptyTxt}>
+                  {loadingMeals ? "Loading meals…" : "No meals logged for this day"}
+                </Text>
               </View>
             )}
 
@@ -938,10 +976,11 @@ export default function ProgressScreen() {
 
       <FloatingNav
         active="progress"
-        onHome={() => router.push("/")}
+        onHome={() => router.navigate("/")}
         onProgress={() => {}}
-        onDiary={() => router.push("/diary")}
+        onDiary={() => router.navigate("/diary")}
         onCamera={() => router.push("/camera")}
+        onMore={() => router.push("/profile")}
       />
     </View>
   );
@@ -951,6 +990,10 @@ export default function ProgressScreen() {
 const styles = StyleSheet.create({
   root:   { flex: 1, backgroundColor: BG },
   scroll: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 120, gap: 14 },
+
+  // Sample-data disclosure banner
+  sampleBanner:     { backgroundColor: "#FFF7ED", borderRadius: 14, borderWidth: 1, borderColor: "rgba(249,115,22,0.25)", paddingHorizontal: 14, paddingVertical: 10 },
+  sampleBannerText: { fontSize: 11, fontWeight: "500", color: "#9A3412", lineHeight: 16 },
 
   // Header
   header:     { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingVertical: 16 },

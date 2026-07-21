@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Animated,
   Modal,
@@ -8,7 +8,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, {
   Circle,
@@ -24,13 +24,14 @@ import {
   History,
   Plus,
   ShieldCheck,
-  TrendingUp,
   X,
 } from "@/components/icons";
 import { FloatingNav } from "@/components/FloatingNav";
+import { apiFetch } from "@/constants/api";
+import type { TodaySummary, UserProfile } from "@/types/api";
 
 // ─── Design tokens ───────────────────────────────────────────────────────────
-const BG       = "#F8F9FA";
+const BG       = "#F8FAFC";
 const SKY      = "#55CDFC";
 const CHARCOAL = "#1A1D20";
 const MUTED    = "#94A3B8";
@@ -44,10 +45,8 @@ const CARD_SHADOW = {
   elevation:     6,
 } as const;
 
-// ─── Calorie budget ──────────────────────────────────────────────────────────
-const TARGET_KCAL    = 2500;
-const CONSUMED_KCAL  = 655;
-const REMAINING_KCAL = TARGET_KCAL - CONSUMED_KCAL;
+// ─── Calorie budget — filled from API ────────────────────────────────────────
+// (target comes from profile.calorie_target at runtime)
 
 // ─── Hero ring geometry ──────────────────────────────────────────────────────
 const RING_SIZE      = 116;
@@ -55,28 +54,29 @@ const RING_CENTER    = RING_SIZE / 2;
 const RING_RADIUS    = 46;
 const STROKE_WIDTH   = 9;
 const CIRCUMFERENCE  = 2 * Math.PI * RING_RADIUS;
-const REMAINING_FRAC = REMAINING_KCAL / TARGET_KCAL;
-const RING_OFFSET    = CIRCUMFERENCE * (1 - REMAINING_FRAC);
-const PCT_DISPLAY    = Math.floor(REMAINING_FRAC * 100);
 
 // ─── Static data ─────────────────────────────────────────────────────────────
-const HEALTH_SCORE = 7.8;
-const STREAK       = 21;
-const TREND_7      = [false, false, false, false, false, false, true];
+const STREAK       = 0;
+const TREND_7      = [false, false, false, false, false, false, false];
 
-const MACROS = [
-  { label: "Protein", val: 112, target: 160, unit: "g", pct: 0.70, color: "#F97316", remaining: 48 },
-  { label: "Carbs",   val: 182, target: 250, unit: "g", pct: 0.73, color: "#0EA5E9", remaining: 68 },
-  { label: "Fats",    val: 58,  target: 70,  unit: "g", pct: 0.83, color: "#F59E0B", remaining: 12 },
-];
-
-const SCANS = [
-  { emoji: "🥘", name: "Masala Dosa",          mealType: "Breakfast", time: "8:30", kcal: 380, from: "#FEF3C7", to: "#FDE68A" },
-  { emoji: "🍛", name: "Paneer Butter Masala",  mealType: "Lunch",     time: "1:15", kcal: 470, from: "#DCFCE7", to: "#BBF7D0" },
-];
+// Real health score (0–10) from today's calorie + macro adherence to targets.
+// Returns null when nothing has been logged yet so the UI shows "—" instead of
+// a fabricated number.
+function computeHealthScore(summary: TodaySummary, profile: UserProfile): number | null {
+  if (!summary.meals.length) return null;
+  const adherence = (value: number, target: number) =>
+    target > 0 ? 1 - Math.min(Math.abs(value - target) / target, 1) : 0;
+  const cal   = adherence(summary.total_calories, profile.calorie_target);
+  const macro = (
+    adherence(summary.total_protein_g, profile.protein_target_g) +
+    adherence(summary.total_carbs_g,   profile.carbs_target_g) +
+    adherence(summary.total_fat_g,     profile.fat_target_g)
+  ) / 3;
+  return Math.round((0.5 * cal + 0.5 * macro) * 10 * 10) / 10;
+}
 
 // ─── AvatarWithRing ───────────────────────────────────────────────────────────
-function AvatarWithRing() {
+function AvatarWithRing({ initials }: { initials: string }) {
   const spin = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -103,7 +103,7 @@ function AvatarWithRing() {
         </Svg>
       </Animated.View>
       <View style={av.inner}>
-        <Text style={av.initials}>RK</Text>
+        <Text style={av.initials}>{initials}</Text>
       </View>
     </View>
   );
@@ -116,14 +116,19 @@ const av = StyleSheet.create({
 });
 
 // ─── HealthScoreCard ──────────────────────────────────────────────────────────
-function HealthScoreCard() {
-  const s     = HEALTH_SCORE;
-  const color = s >= 9 ? "#0D9488" : s >= 7 ? "#22C55E" : s >= 4 ? "#EAB308" : "#EF4444";
-  const label = s >= 9
+function HealthScoreCard({ score }: { score: number | null }) {
+  const has   = score !== null;
+  const s     = score ?? 0;
+  const color = !has ? MUTED : s >= 9 ? "#0D9488" : s >= 7 ? "#22C55E" : s >= 4 ? "#EAB308" : "#EF4444";
+  const label = !has
+    ? "Log a meal to see today's score"
+    : s >= 9
     ? "Optimal — Peak Performance! 🎯"
     : s >= 7
-    ? "Healthy — Great work, Ravi! 💪"
-    : "Moderate — Keep pushing forward";
+    ? "Healthy — Great work! 💪"
+    : s >= 4
+    ? "Moderate — Keep pushing forward"
+    : "Needs work — refuel mindfully";
 
   return (
     <View style={[hsc.card, CARD_SHADOW]}>
@@ -134,7 +139,7 @@ function HealthScoreCard() {
           <Text style={hsc.sub}>{label}</Text>
         </View>
         <View style={hsc.numRow}>
-          <Text style={[hsc.num, { color }]}>{s.toFixed(1)}</Text>
+          <Text style={[hsc.num, { color }]}>{has ? s.toFixed(1) : "—"}</Text>
           <Text style={hsc.den}>/10</Text>
         </View>
       </View>
@@ -183,12 +188,20 @@ const hsc = StyleSheet.create({
 });
 
 // ─── MacroStrip ───────────────────────────────────────────────────────────────
-function MacroStrip() {
-  const barAnims = useRef(MACROS.map(() => new Animated.Value(0))).current;
+function MacroStrip({ protein, carbs, fat, proteinTarget, carbsTarget, fatTarget }: {
+  protein: number; carbs: number; fat: number;
+  proteinTarget: number; carbsTarget: number; fatTarget: number;
+}) {
+  const macros = [
+    { label: "Protein", val: protein, target: proteinTarget, unit: "g", color: "#F97316", remaining: Math.max(proteinTarget - protein, 0) },
+    { label: "Carbs",   val: carbs,   target: carbsTarget,   unit: "g", color: "#0EA5E9", remaining: Math.max(carbsTarget - carbs, 0) },
+    { label: "Fats",    val: fat,     target: fatTarget,     unit: "g", color: "#F59E0B", remaining: Math.max(fatTarget - fat, 0) },
+  ];
+  const barAnims = useRef(macros.map(() => new Animated.Value(0))).current;
 
   useEffect(() => {
     Animated.parallel(
-      MACROS.map((m, i) =>
+      macros.map((m, i) =>
         Animated.timing(barAnims[i], {
           toValue:         1,
           duration:        1300,
@@ -197,11 +210,11 @@ function MacroStrip() {
         }),
       ),
     ).start();
-  }, []);
+  }, [protein, carbs, fat]);
 
   return (
     <View style={[ms.card, CARD_SHADOW]}>
-      {MACROS.map((m, i) => (
+      {macros.map((m, i) => (
         <React.Fragment key={m.label}>
           {i > 0 && <View style={ms.divider} />}
           <View style={ms.col}>
@@ -217,7 +230,7 @@ function MacroStrip() {
                   {
                     width: barAnims[i].interpolate({
                       inputRange:  [0, 1],
-                      outputRange: ["0%", `${Math.round(m.pct * 100)}%`],
+                      outputRange: ["0%", `${Math.min(Math.round((m.val / Math.max(m.target, 1)) * 100), 100)}%`],
                     }),
                     backgroundColor: m.color,
                   },
@@ -247,26 +260,40 @@ const ms = StyleSheet.create({
 });
 
 // ─── ScanCarousel ─────────────────────────────────────────────────────────────
-function ScanCarousel({ onAdd }: { onAdd: () => void }) {
+const SCAN_COLORS = [
+  { from: "#FEF3C7", to: "#FDE68A" },
+  { from: "#DCFCE7", to: "#BBF7D0" },
+  { from: "#DBEAFE", to: "#BFDBFE" },
+  { from: "#EDE9FE", to: "#DDD6FE" },
+];
+const MEAL_EMOJIS: Record<string, string> = {
+  Breakfast: "🥘", Lunch: "🍛", Snacks: "🍎", Dinner: "🌙",
+};
+
+function ScanCarousel({ meals, onAdd }: { meals: TodaySummary["meals"]; onAdd: () => void }) {
   return (
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={sc.row}
     >
-      {SCANS.map((item) => (
-        <View key={item.name} style={[sc.card, { backgroundColor: item.from }, CARD_SHADOW]}>
-          <Text style={sc.emoji}>{item.emoji}</Text>
-          <Text style={sc.name} numberOfLines={2}>{item.name}</Text>
-          <Text style={sc.meta}>{item.mealType}  •  {item.time}</Text>
-          <View style={sc.kcalRow}>
-            <Text style={sc.kcal}>{item.kcal}</Text>
-            <Text style={sc.kcalU}>kcal</Text>
+      {meals.map((meal, idx) => {
+        const col = SCAN_COLORS[idx % SCAN_COLORS.length];
+        const time = new Date(meal.logged_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+        return (
+          <View key={meal.id} style={[sc.card, { backgroundColor: col.from }, CARD_SHADOW]}>
+            <Text style={sc.emoji}>{MEAL_EMOJIS[meal.meal_type] ?? "🍽️"}</Text>
+            <Text style={sc.name} numberOfLines={2}>
+              {(meal.food_items as any[]).map(f => f.item_name).join(", ")}
+            </Text>
+            <Text style={sc.meta}>{meal.meal_type}  •  {time}</Text>
+            <View style={sc.kcalRow}>
+              <Text style={sc.kcal}>{Math.round(meal.total_calories)}</Text>
+              <Text style={sc.kcalU}>kcal</Text>
+            </View>
           </View>
-        </View>
-      ))}
-
-      {/* Add scan button */}
+        );
+      })}
       <TouchableOpacity style={sc.addCard} onPress={onAdd} activeOpacity={0.75}>
         <View style={sc.addCircle}>
           <Plus size={20} color={SKY} strokeWidth={2.5} />
@@ -292,30 +319,12 @@ const sc = StyleSheet.create({
 });
 
 // ─── Profile bottom sheet ─────────────────────────────────────────────────────
-const XP_CURRENT = 2340;
-const XP_NEXT    = 3000;
-const XP_LABEL   = "Health Champion";
-
-function XpBar() {
-  const pct  = XP_CURRENT / XP_NEXT;
-  const fill = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.timing(fill, { toValue: pct, duration: 900, delay: 200, useNativeDriver: false }).start();
-  }, []);
-  return (
-    <View style={pb.xpTrack}>
-      <Animated.View
-        style={[
-          pb.xpFill,
-          { width: fill.interpolate({ inputRange: [0, 1], outputRange: ["0%", "100%"] }) },
-        ]}
-      />
-    </View>
-  );
-}
-
-function ProfileSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+function ProfileSheet({ visible, onClose, profile, router, consumedKcal, targetKcal, healthScore }: { visible: boolean; onClose: () => void; profile: UserProfile; router: ReturnType<typeof useRouter>; consumedKcal: number; targetKcal: number; healthScore: number | null }) {
   const sheetInsets = useSafeAreaInsets();
+  const hsHas   = healthScore !== null;
+  const hsText  = hsHas ? healthScore!.toFixed(1) : "—";
+  const hsColor = !hsHas ? MUTED : healthScore! >= 9 ? "#0D9488" : healthScore! >= 7 ? "#22C55E" : healthScore! >= 4 ? "#EAB308" : "#EF4444";
+  const hsPct   = hsHas ? Math.max(0, Math.min(100, healthScore! * 10)) : 0;
   return (
     <Modal
       visible={visible}
@@ -340,54 +349,45 @@ function ProfileSheet({ visible, onClose }: { visible: boolean; onClose: () => v
         {/* Avatar + name */}
         <View style={pb.avatarRow}>
           <View style={pb.avatarCircle}>
-            <Text style={pb.avatarInitials}>RK</Text>
+            <Text style={pb.avatarInitials}>
+              {profile.name.split(" ").map(w => w[0]).join("").slice(0,2).toUpperCase()}
+            </Text>
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={pb.nameText}>Ravi Kumar</Text>
+            <Text style={pb.nameText}>{profile.name}</Text>
             <View style={pb.tierRow}>
               <ShieldCheck size={10} color={SKY} strokeWidth={2.5} />
               <Text style={pb.tierText}>SWASTH PRO</Text>
-              <Text style={pb.tierDot}>·</Text>
-              <Text style={pb.tierText}>LVL 8</Text>
             </View>
-            <Text style={pb.streakSub}>21-day streak · June 2026</Text>
+            {profile.weight_kg && (
+              <Text style={pb.streakSub}>{profile.weight_kg} kg{profile.height_cm ? ` · ${profile.height_cm} cm` : ""}</Text>
+            )}
           </View>
+          <TouchableOpacity
+            onPress={() => { onClose(); router.push("/profile"); }}
+            style={{ paddingHorizontal: 12, paddingVertical: 6, backgroundColor: "#EFF6FF", borderRadius: 10 }}
+          >
+            <Text style={{ fontSize: 12, fontWeight: "700", color: SKY }}>Edit ›</Text>
+          </TouchableOpacity>
         </View>
 
         <View style={pb.divider} />
-
-        {/* Level progress */}
-        <View style={pb.section}>
-          <View style={pb.sectionHeader}>
-            <Text style={pb.sectionLabel}>LEVEL PROGRESS</Text>
-            <Text style={pb.xpNum}>{XP_CURRENT.toLocaleString()} / {XP_NEXT.toLocaleString()} XP</Text>
-          </View>
-          <XpBar />
-          <Text style={pb.xpSub}>
-            {(XP_NEXT - XP_CURRENT).toLocaleString()} XP to Level 9 — {XP_LABEL}
-          </Text>
-        </View>
 
         {/* Day streak */}
         <View style={[pb.section, pb.streakSection]}>
           <View style={pb.sectionHeader}>
             <Text style={pb.sectionLabel}>DAY STREAK</Text>
-            <Text style={pb.streakSub2}>Personal best</Text>
           </View>
           <View style={pb.streakRow}>
             <View style={pb.streakBig}>
-              <Text style={pb.streakNum}>21</Text>
+              <Text style={pb.streakNum}>{STREAK}</Text>
               <Flame size={22} color="#F97316" fill="#F97316" />
             </View>
-            <View style={pb.streakChips}>
-              <View style={[pb.chip, { backgroundColor: "#FEF3C7" }]}>
-                <Text style={[pb.chipTxt, { color: "#F97316" }]}>🏆 Personal best</Text>
-              </View>
-              <View style={[pb.chip, { backgroundColor: "#DCFCE7" }]}>
-                <TrendingUp size={10} color="#22C55E" strokeWidth={2.5} />
-                <Text style={[pb.chipTxt, { color: "#22C55E" }]}>+3 this week</Text>
-              </View>
-            </View>
+            <Text style={pb.streakHint}>
+              {STREAK > 0
+                ? `${STREAK}-day logging streak — keep it going!`
+                : "Log a meal today to start your streak."}
+            </Text>
           </View>
         </View>
 
@@ -396,26 +396,28 @@ function ProfileSheet({ visible, onClose }: { visible: boolean; onClose: () => v
           {/* Health score */}
           <View style={[pb.statCard, { flex: 1.2 }]}>
             <Text style={pb.statLabel}>HEALTH SCORE</Text>
-            <Text style={[pb.statBig, { color: "#22C55E" }]}>7.5</Text>
+            <Text style={[pb.statBig, { color: hsColor }]}>{hsText}</Text>
             <Text style={pb.statSub}>out of 10</Text>
-            <View style={[pb.statBlob, { backgroundColor: "rgba(34,197,94,0.12)" }]} />
+            <View style={[pb.statBlob, { backgroundColor: "rgba(148,163,184,0.10)" }]} />
           </View>
           <View style={pb.statsRight}>
             {/* Calories */}
             <View style={pb.statCard}>
               <Text style={pb.statLabel}>CALORIES</Text>
-              <Text style={[pb.statBig, { color: "#0EA5E9", fontSize: 22 }]}>{CONSUMED_KCAL}</Text>
-              <Text style={pb.statSub}>of {TARGET_KCAL.toLocaleString()}</Text>
+              <Text style={[pb.statBig, { color: "#0EA5E9", fontSize: 22 }]}>{consumedKcal}</Text>
+              <Text style={pb.statSub}>of {targetKcal.toLocaleString()}</Text>
               <View style={[pb.statBlob, { backgroundColor: "rgba(14,165,233,0.12)" }]} />
             </View>
             {/* Weight */}
             <View style={pb.statCard}>
               <Text style={pb.statLabel}>WEIGHT</Text>
               <View style={{ flexDirection: "row", alignItems: "baseline", gap: 1 }}>
-                <Text style={[pb.statBig, { color: "#22C55E", fontSize: 22 }]}>72</Text>
+                <Text style={[pb.statBig, { color: "#22C55E", fontSize: 22 }]}>
+                  {profile.weight_kg ?? "—"}
+                </Text>
                 <Text style={[pb.statSub, { marginBottom: 2 }]}>kg</Text>
               </View>
-              <Text style={pb.statSub}>−0.8 kg week</Text>
+              <Text style={pb.statSub}>{profile.height_cm ? `${profile.height_cm} cm` : "Set in profile"}</Text>
               <View style={[pb.statBlob, { backgroundColor: "rgba(34,197,94,0.12)" }]} />
             </View>
           </View>
@@ -424,13 +426,15 @@ function ProfileSheet({ visible, onClose }: { visible: boolean; onClose: () => v
         {/* Score scale bar */}
         <View style={pb.scaleRow}>
           <Text style={pb.scaleLabel}>HEALTH SCORE SCALE</Text>
-          <Text style={[pb.scaleBig, { color: "#22C55E" }]}>7.5 <Text style={pb.scaleDen}>/10</Text></Text>
+          <Text style={[pb.scaleBig, { color: hsColor }]}>{hsText} <Text style={pb.scaleDen}>/10</Text></Text>
         </View>
         <View style={pb.scaleBar}>
           {["#EF4444","#F97316","#EAB308","#22C55E","#0D9488"].map((c, i) => (
             <View key={i} style={[pb.scaleSegment, { backgroundColor: c }]} />
           ))}
-          <View style={[pb.scaleDot, { left: `${(7.5 / 10) * 100}%` as any }]} />
+          {hsHas && (
+            <View style={[pb.scaleDot, { left: `${hsPct}%`, borderColor: hsColor }]} />
+          )}
         </View>
       </View>
     </Modal>
@@ -463,6 +467,7 @@ const pb = StyleSheet.create({
   streakRow:      { flexDirection: "row", alignItems: "center", gap: 12 },
   streakBig:      { flexDirection: "row", alignItems: "center", gap: 4 },
   streakNum:      { fontSize: 40, fontWeight: "900", color: "#F97316", letterSpacing: -2 },
+  streakHint:     { flex: 1, fontSize: 12, fontWeight: "500", color: MUTED, lineHeight: 17 },
   streakChips:    { flex: 1, gap: 6 },
   chip:           { flexDirection: "row", alignItems: "center", gap: 5, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 5, alignSelf: "flex-start" },
   chipTxt:        { fontSize: 11, fontWeight: "700" },
@@ -490,6 +495,46 @@ export default function HomeScreen() {
   const shimmer = useRef(new Animated.Value(0)).current;
   const [showProfile, setShowProfile] = useState(false);
 
+  const [summary, setSummary] = useState<TodaySummary>({
+    total_calories: 0, total_protein_g: 0,
+    total_carbs_g: 0,  total_fat_g: 0, meals: [],
+  });
+  const [profile, setProfile] = useState<UserProfile>({
+    id: 0, updated_at: "", name: "User",
+    age: null, weight_kg: null, height_cm: null,
+    calorie_target: 2000, protein_target_g: 120,
+    carbs_target_g: 250,  fat_target_g: 65,
+  });
+
+  const fetchData = useCallback(async () => {
+    try {
+      const [sumRes, profRes] = await Promise.all([
+        apiFetch("/api/v1/today-summary"),
+        apiFetch("/api/v1/profile"),
+      ]);
+      if (sumRes.ok)  setSummary(await sumRes.json());
+      if (profRes.ok) setProfile(await profRes.json());
+    } catch (err) {
+      // Offline or network error - keep existing data
+      console.log("[HomeScreen] Failed to fetch data:", err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
+  // Re-fetch whenever the screen regains focus (e.g. after logging a meal),
+  // not only on first mount — keeps today's totals fresh.
+  useFocusEffect(useCallback(() => { fetchData(); }, [fetchData]));
+
+  const consumedKcal  = Math.round(summary.total_calories);
+  const targetKcal    = profile.calorie_target;
+  const remainingKcal = Math.max(targetKcal - consumedKcal, 0);
+  // Guard against division by zero when target is 0
+  const remainingFrac = targetKcal > 0 ? remainingKcal / targetKcal : 0;
+  const ringOffset    = CIRCUMFERENCE * (1 - Math.min(remainingFrac, 1));
+  const pctDisplay    = Math.floor(remainingFrac * 100);
+  const healthScore   = computeHealthScore(summary, profile);
+
+  // shimmer is a ref (useRef) that persists across renders and doesn't need to be
+  // in the dependency array - the animation runs once on mount and loops forever.
   useEffect(() => {
     Animated.loop(
       Animated.sequence([
@@ -497,6 +542,7 @@ export default function HomeScreen() {
         Animated.timing(shimmer, { toValue: 0, duration: 0,    useNativeDriver: true }),
       ]),
     ).start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const shimmerX = shimmer.interpolate({
@@ -514,10 +560,10 @@ export default function HomeScreen() {
         <View style={styles.header}>
           <View style={styles.headerLeft}>
             <TouchableOpacity onPress={() => setShowProfile(true)} activeOpacity={0.8}>
-              <AvatarWithRing />
+              <AvatarWithRing initials={profile.name.split(" ").map(w => w[0]).join("").slice(0,2).toUpperCase() || "U"} />
             </TouchableOpacity>
             <View>
-              <Text style={styles.greeting}>Namaste, Ravi! 🙏</Text>
+              <Text style={styles.greeting}>Namaste, {profile.name}! 🙏</Text>
               <View style={styles.badgeRow}>
                 <ShieldCheck size={10} color={SKY} strokeWidth={2.5} />
                 <Text style={styles.badge}>SWASTH PRO</Text>
@@ -528,7 +574,7 @@ export default function HomeScreen() {
               </View>
             </View>
           </View>
-          <TouchableOpacity style={styles.historyBtn} activeOpacity={0.75}>
+          <TouchableOpacity style={styles.historyBtn} onPress={() => router.push("/diary")} activeOpacity={0.75}>
             <History size={13} color={SKY} strokeWidth={2} />
             <Text style={styles.historyTxt}>History</Text>
           </TouchableOpacity>
@@ -536,7 +582,7 @@ export default function HomeScreen() {
 
         {/* ── Health Score ───────────────────────────────────────── */}
         <View style={styles.padH}>
-          <HealthScoreCard />
+          <HealthScoreCard score={healthScore} />
         </View>
 
         {/* ── Hero Calorie Card ──────────────────────────────────── */}
@@ -571,9 +617,9 @@ export default function HomeScreen() {
                 <Flame size={14} color="rgba(255,255,255,0.85)" strokeWidth={2} />
                 <Text style={styles.heroLabelTxt}>Calories Left</Text>
               </View>
-              <Text style={styles.heroNum}>{REMAINING_KCAL.toLocaleString()}</Text>
+              <Text style={styles.heroNum}>{remainingKcal.toLocaleString()}</Text>
               <Text style={styles.heroUnit}>kcal remaining</Text>
-              <Text style={styles.heroBurn}>🔥 {CONSUMED_KCAL} consumed today</Text>
+              <Text style={styles.heroBurn}>🔥 {consumedKcal} consumed today</Text>
             </View>
 
             <View style={styles.ringWrap}>
@@ -587,21 +633,21 @@ export default function HomeScreen() {
                     cx={RING_CENTER} cy={RING_CENTER} r={RING_RADIUS}
                     stroke="#FFFFFF" strokeWidth={STROKE_WIDTH} fill="none"
                     strokeDasharray={String(CIRCUMFERENCE)}
-                    strokeDashoffset={RING_OFFSET}
+                    strokeDashoffset={ringOffset}
                     strokeLinecap="round"
                   />
                 </G>
               </Svg>
               <View style={styles.ringOverlay}>
-                <Text style={styles.ringPct}>{PCT_DISPLAY}%</Text>
-                <Text style={styles.ringGoal}>of goal</Text>
+                <Text style={styles.ringPct}>{pctDisplay}%</Text>
+                <Text style={styles.ringGoal}>remaining</Text>
               </View>
             </View>
           </View>
 
-          <TouchableOpacity style={styles.heroPill} activeOpacity={0.85}>
+          <TouchableOpacity style={styles.heroPill} onPress={() => router.push("/diary")} activeOpacity={0.85}>
             <Text style={styles.heroPillTxt}>
-              {CONSUMED_KCAL} / {TARGET_KCAL} kcal consumed
+              {consumedKcal} / {targetKcal} kcal consumed
             </Text>
             <ChevronRight size={14} color="rgba(255,255,255,0.75)" strokeWidth={2.5} />
           </TouchableOpacity>
@@ -610,32 +656,40 @@ export default function HomeScreen() {
         {/* ── Macros ─────────────────────────────────────────────── */}
         <View style={styles.sectionRow}>
           <Text style={styles.sectionTitle}>Macros Today</Text>
-          <TouchableOpacity activeOpacity={0.7}>
+          <TouchableOpacity activeOpacity={0.7} onPress={() => router.push("/diary")}>
             <Text style={styles.sectionLink}>Details ›</Text>
           </TouchableOpacity>
         </View>
         <View style={styles.padH}>
-          <MacroStrip />
+          <MacroStrip
+            protein={Math.round(summary.total_protein_g)}
+            carbs={Math.round(summary.total_carbs_g)}
+            fat={Math.round(summary.total_fat_g)}
+            proteinTarget={profile.protein_target_g}
+            carbsTarget={profile.carbs_target_g}
+            fatTarget={profile.fat_target_g}
+          />
         </View>
 
         {/* ── Today's Scans ──────────────────────────────────────── */}
         <View style={styles.sectionRow}>
-          <Text style={styles.sectionTitle}>Today's Scans</Text>
+          <Text style={styles.sectionTitle}>Today's Meals</Text>
           <View style={styles.badge2}>
-            <Text style={styles.badge2Txt}>{SCANS.length}</Text>
+            <Text style={styles.badge2Txt}>{summary.meals.length}</Text>
           </View>
         </View>
-        <ScanCarousel onAdd={() => router.push("/camera")} />
+        <ScanCarousel meals={summary.meals} onAdd={() => router.push("/camera")} />
       </ScrollView>
 
-      <ProfileSheet visible={showProfile} onClose={() => setShowProfile(false)} />
+      <ProfileSheet visible={showProfile} onClose={() => setShowProfile(false)} profile={profile} router={router} consumedKcal={consumedKcal} targetKcal={targetKcal} healthScore={healthScore} />
 
       <FloatingNav
         active="home"
         onHome={() => {}}
-        onProgress={() => router.push("/progress")}
-        onDiary={() => router.push("/diary")}
+        onProgress={() => router.navigate("/progress")}
+        onDiary={() => router.navigate("/diary")}
         onCamera={() => router.push("/camera")}
+        onMore={() => router.push("/profile")}
       />
     </View>
   );

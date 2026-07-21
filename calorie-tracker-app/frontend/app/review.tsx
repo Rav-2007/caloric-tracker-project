@@ -22,15 +22,28 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { ArrowLeft, CheckCircle, RefreshCw, Zap } from "@/components/icons";
 import { Colors, alpha } from "@/constants/colors";
+import { apiFetch, readErrorDetail } from "@/constants/api";
+import { inferMealType, type LogMealRequest, type LoggedFoodItem } from "@/types/api";
 
 // ─── Design tokens ───────────────────────────────────────────────────────────
 const EMERALD_LEAF = "#059669";
 const ICE          = "#55CDFC";
 
-// Slider range & snap
-const SLIDER_MIN  = 50;
-const SLIDER_MAX  = 500;
+// Slider snap grid. The min/max range is derived per item from its AI-estimated
+// weight (see sliderRange) so small sides (pickle, papad ~10–20 g) and large
+// mains (biryani ~250 g+) are both reachable, instead of a fixed 50–500 g band
+// that pinned tiny items to the far left and clipped large ones.
 const SLIDER_STEP = 5;
+
+function sliderRange(estimatedGrams: number): { min: number; max: number } {
+  // Snap bounds to the step grid; keep the AI estimate in the lower third of
+  // the track so the user has room to both shrink and grow the portion.
+  const snap = (v: number) => Math.max(SLIDER_STEP, Math.round(v / SLIDER_STEP) * SLIDER_STEP);
+  const est = Math.max(estimatedGrams, SLIDER_STEP);
+  const min = snap(Math.min(est * 0.25, est - SLIDER_STEP));
+  const max = snap(Math.max(est * 3, min + SLIDER_STEP * 4, 100));
+  return { min, max };
+}
 
 // Rotating accent colors for item cards
 const ACCENT_POOL = [
@@ -72,40 +85,41 @@ interface FoodAnalysisResult {
  */
 interface SliderProps {
   value:    number;
+  min:      number;
+  max:      number;
   color:    string;
   onChange: (v: number) => void;
 }
 
-function GramSlider({ value, color, onChange }: SliderProps) {
+function GramSlider({ value, min, max, color, onChange }: SliderProps) {
   const trackRef  = useRef<View>(null);
   const layoutRef = useRef({ x: 0, width: 1 });
 
-  // Always-fresh callback — avoids stale closure in the stable PanResponder
+  // Always-fresh callback + range — the PanResponder is created once, so both
+  // are read through refs to avoid a stale closure when props change.
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const rangeRef = useRef({ min, max });
+  rangeRef.current = { min, max };
 
-  const pct = (value - SLIDER_MIN) / (SLIDER_MAX - SLIDER_MIN);
+  const pct = (value - min) / (max - min);
+
+  function emit(pageX: number) {
+    const { x, width } = layoutRef.current;
+    const { min: lo, max: hi } = rangeRef.current;
+    const rel = Math.max(0, Math.min(width, pageX - x));
+    const raw = lo + (rel / width) * (hi - lo);
+    onChangeRef.current(
+      Math.max(lo, Math.min(hi, Math.round(raw / SLIDER_STEP) * SLIDER_STEP)),
+    );
+  }
 
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder:  () => true,
-      onPanResponderGrant: (e) => {
-        const { x, width } = layoutRef.current;
-        const rel = Math.max(0, Math.min(width, e.nativeEvent.pageX - x));
-        const raw = SLIDER_MIN + (rel / width) * (SLIDER_MAX - SLIDER_MIN);
-        onChangeRef.current(
-          Math.max(SLIDER_MIN, Math.min(SLIDER_MAX, Math.round(raw / SLIDER_STEP) * SLIDER_STEP)),
-        );
-      },
-      onPanResponderMove: (e) => {
-        const { x, width } = layoutRef.current;
-        const rel = Math.max(0, Math.min(width, e.nativeEvent.pageX - x));
-        const raw = SLIDER_MIN + (rel / width) * (SLIDER_MAX - SLIDER_MIN);
-        onChangeRef.current(
-          Math.max(SLIDER_MIN, Math.min(SLIDER_MAX, Math.round(raw / SLIDER_STEP) * SLIDER_STEP)),
-        );
-      },
+      onPanResponderGrant: (e) => emit(e.nativeEvent.pageX),
+      onPanResponderMove:  (e) => emit(e.nativeEvent.pageX),
     }),
   ).current;
 
@@ -162,6 +176,7 @@ interface ItemCardProps {
 }
 
 const ItemAdjustCard = React.memo(function ItemAdjustCard({ item, grams, accent, onGramsChange }: ItemCardProps) {
+  const range   = useMemo(() => sliderRange(item.estimated_grams), [item.estimated_grams]);
   const scale   = item.estimated_grams > 0 ? grams / item.estimated_grams : 1;
   const liveCal = Math.round(item.calories  * scale);
   const livePro = (item.protein_g * scale).toFixed(1);
@@ -203,12 +218,12 @@ const ItemAdjustCard = React.memo(function ItemAdjustCard({ item, grams, accent,
       </View>
 
       {/* Interactive slider */}
-      <GramSlider value={grams} color={accent} onChange={onGramsChange} />
+      <GramSlider value={grams} min={range.min} max={range.max} color={accent} onChange={onGramsChange} />
 
       {/* Range hint */}
       <View style={styles.rangeRow}>
-        <Text style={styles.rangeText}>{SLIDER_MIN}g</Text>
-        <Text style={styles.rangeText}>{SLIDER_MAX}g</Text>
+        <Text style={styles.rangeText}>{range.min}g</Text>
+        <Text style={styles.rangeText}>{range.max}g</Text>
       </View>
 
       {/* Live macro pills — update on every slider tick */}
@@ -233,8 +248,20 @@ export default function ReviewScreen() {
 
   const result: FoodAnalysisResult = useMemo(() => {
     try {
-      return JSON.parse(data ?? "{}");
-    } catch {
+      const parsed = JSON.parse(data ?? "{}");
+      if (!parsed.food_items || !Array.isArray(parsed.food_items)) {
+        console.warn("[ReviewScreen] Invalid analysis data received, using empty result");
+        return {
+          food_items: [],
+          total_calories: 0,
+          total_protein_g: 0,
+          total_carbs_g: 0,
+          total_fat_g: 0,
+        };
+      }
+      return parsed;
+    } catch (err) {
+      console.error("[ReviewScreen] Failed to parse analysis data:", err instanceof Error ? err.message : String(err));
       return {
         food_items: [],
         total_calories: 0,
@@ -249,6 +276,8 @@ export default function ReviewScreen() {
   const [weights, setWeights] = useState<number[]>(() =>
     result.food_items.map((i) => i.estimated_grams),
   );
+
+  const [isLogging, setIsLogging] = useState(false);
 
   // Stable updater — never recreated, so React.memo on ItemAdjustCard actually fires.
   const setWeight = useCallback((index: number, g: number) =>
@@ -271,6 +300,62 @@ export default function ReviewScreen() {
     }, 0),
     [weights, result.food_items],
   );
+
+  const handleLog = useCallback(async () => {
+    if (isLogging) return;
+    setIsLogging(true);
+    try {
+      const mealType = inferMealType();
+      const loggedItems: LoggedFoodItem[] = result.food_items.map((item, i) => {
+        const g     = weights[i] ?? item.estimated_grams;
+        const scale = item.estimated_grams > 0 ? g / item.estimated_grams : 1;
+        return {
+          item_name:        item.item_name,
+          estimated_grams:  item.estimated_grams,
+          logged_grams:     g,
+          calories:         Math.round(item.calories  * scale * 10) / 10,
+          protein_g:        Math.round(item.protein_g * scale * 10) / 10,
+          carbs_g:          Math.round(item.carbs_g   * scale * 10) / 10,
+          fat_g:            Math.round(item.fat_g     * scale * 10) / 10,
+          nutrition_source: item.nutrition_source,
+        };
+      });
+
+      const payload: LogMealRequest = {
+        meal_type:      mealType,
+        food_items:     loggedItems,
+        total_calories: totalCalories,
+        total_protein_g: Math.round(loggedItems.reduce((s, i) => s + i.protein_g, 0) * 10) / 10,
+        total_carbs_g:   Math.round(loggedItems.reduce((s, i) => s + i.carbs_g,   0) * 10) / 10,
+        total_fat_g:     Math.round(loggedItems.reduce((s, i) => s + i.fat_g,     0) * 10) / 10,
+      };
+
+      const res = await apiFetch("/api/v1/log-meal", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const err = await readErrorDetail(res, "Failed to save meal.");
+        Alert.alert("Error", err);
+        return;
+      }
+
+      Alert.alert(
+        "Logged! 🎉",
+        `${totalCalories.toLocaleString()} kcal saved to your diary as ${mealType}.`,
+        // replace (not push) so back from the Diary doesn't return to this
+        // already-logged review screen; the Diary refetches on focus.
+        [{ text: "OK", onPress: () => router.replace("/diary") }],
+      );
+    } catch (err) {
+      console.log("[ReviewScreen] Failed to log meal:", err instanceof Error ? err.message : String(err));
+      Alert.alert("Error", "Could not reach the server. Check your connection.");
+    } finally {
+      setIsLogging(false);
+    }
+  }, [isLogging, result.food_items, weights, totalCalories, router]);
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
@@ -345,17 +430,15 @@ export default function ReviewScreen() {
         ]}
       >
         <TouchableOpacity
-          style={styles.primaryBtn}
+          style={[styles.primaryBtn, isLogging && { opacity: 0.6 }]}
           activeOpacity={0.82}
-          onPress={() =>
-            Alert.alert(
-              "Logged! 🎉",
-              `${totalCalories.toLocaleString()} kcal added to your Swasth Journal.\n\nFull history sync coming in the next release.`,
-            )
-          }
+          disabled={isLogging}
+          onPress={handleLog}
         >
           <CheckCircle size={18} color={Colors.white} strokeWidth={2} />
-          <Text style={styles.primaryBtnText}>Log to Swasth Journal</Text>
+          <Text style={styles.primaryBtnText}>
+            {isLogging ? "Saving…" : "Log to Swasth Journal"}
+          </Text>
         </TouchableOpacity>
 
         <TouchableOpacity

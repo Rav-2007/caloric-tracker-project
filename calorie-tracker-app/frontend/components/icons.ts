@@ -16,9 +16,11 @@ export { default as ArrowLeft }       from "lucide-react-native/dist/esm/icons/a
 export { default as BarChart2 }       from "lucide-react-native/dist/esm/icons/chart-no-axes-column";
 export { default as BookOpen }        from "lucide-react-native/dist/esm/icons/book-open";
 export { default as BookmarkPlus }    from "lucide-react-native/dist/esm/icons/bookmark-plus";
+export { default as Calendar }        from "lucide-react-native/dist/esm/icons/calendar";
 export { default as Camera }          from "lucide-react-native/dist/esm/icons/camera";
 export { default as CheckCircle }     from "lucide-react-native/dist/esm/icons/circle-check-big";
 export { default as CheckCircle2 }    from "lucide-react-native/dist/esm/icons/circle-check";
+export { default as ChevronDown }     from "lucide-react-native/dist/esm/icons/chevron-down";
 export { default as ChevronLeft }     from "lucide-react-native/dist/esm/icons/chevron-left";
 export { default as ChevronRight }    from "lucide-react-native/dist/esm/icons/chevron-right";
 export { default as Coffee }          from "lucide-react-native/dist/esm/icons/coffee";
@@ -43,6 +45,7 @@ export { default as Sun }             from "lucide-react-native/dist/esm/icons/s
 export { default as Sunset }          from "lucide-react-native/dist/esm/icons/sunset";
 export { default as Tag }             from "lucide-react-native/dist/esm/icons/tag";
 export { default as TrendingUp }      from "lucide-react-native/dist/esm/icons/trending-up";
+export { default as User }            from "lucide-react-native/dist/esm/icons/user";
 export { default as UtensilsCrossed } from "lucide-react-native/dist/esm/icons/utensils-crossed";
 export { default as X }               from "lucide-react-native/dist/esm/icons/x";
 export { default as Zap }             from "lucide-react-native/dist/esm/icons/zap";

@@ -33,6 +33,7 @@ export interface FloatingNavProps {
   onProgress: () => void;
   onDiary:    () => void;
   onCamera:   () => void;
+  onMore:     () => void;
 }
 
 function NavItem({
@@ -46,10 +47,34 @@ function NavItem({
   active?: boolean;
   onPress?: () => void;
 }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const glow  = useRef(new Animated.Value(active ? 1 : 0)).current;
+
+  // Animate the active-tab highlight in/out when selection changes.
+  useEffect(() => {
+    Animated.timing(glow, {
+      toValue: active ? 1 : 0,
+      duration: 220,
+      useNativeDriver: true,
+    }).start();
+  }, [active, glow]);
+
+  const pressIn  = () => Animated.spring(scale, { toValue: 0.86, useNativeDriver: true, speed: 60, bounciness: 6 }).start();
+  const pressOut = () => Animated.spring(scale, { toValue: 1,    useNativeDriver: true, speed: 30, bounciness: 12 }).start();
+
   return (
-    <TouchableOpacity style={s.item} onPress={onPress} activeOpacity={0.7}>
-      {icon(active ? SKY : MUTED)}
-      <Text style={[s.label, active && s.labelOn]}>{label}</Text>
+    <TouchableOpacity
+      style={s.item}
+      onPress={onPress}
+      onPressIn={pressIn}
+      onPressOut={pressOut}
+      activeOpacity={0.85}
+    >
+      <Animated.View style={[s.itemInner, { transform: [{ scale }] }]}>
+        <Animated.View style={[s.activePill, { opacity: glow }]} pointerEvents="none" />
+        {icon(active ? SKY : MUTED)}
+        <Text style={[s.label, active && s.labelOn]}>{label}</Text>
+      </Animated.View>
     </TouchableOpacity>
   );
 }
@@ -60,6 +85,7 @@ export function FloatingNav({
   onProgress,
   onDiary,
   onCamera,
+  onMore,
 }: FloatingNavProps) {
   const insets      = useSafeAreaInsets();
   const haloScale   = useRef(new Animated.Value(1)).current;
@@ -149,7 +175,7 @@ export function FloatingNav({
         />
         <NavItem
           icon={(c) => <MoreHorizontal  size={20} color={c} strokeWidth={2} />}
-          label="More"
+          label="More"     onPress={onMore}
         />
       </View>
     </View>
@@ -204,7 +230,19 @@ const s = StyleSheet.create({
     elevation:         16,
   },
   slot:    { flex: 1.2 },
-  item:    { flex: 1, alignItems: "center", gap: 3, paddingVertical: 4 },
+  item:    { flex: 1, alignItems: "center", justifyContent: "center" },
+  itemInner: {
+    alignItems:        "center",
+    justifyContent:    "center",
+    gap:               3,
+    paddingVertical:   6,
+    paddingHorizontal: 10,
+  },
+  activePill: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius:    16,
+    backgroundColor: "rgba(85,205,252,0.14)",
+  },
   label:   { fontSize: 8, fontWeight: "600", color: MUTED, letterSpacing: 0.2 },
   labelOn: { color: SKY, fontWeight: "700" },
 });

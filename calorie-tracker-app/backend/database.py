@@ -1,5 +1,6 @@
 import os
 from collections.abc import AsyncGenerator
+import ssl
 
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import (
@@ -36,23 +37,18 @@ if not _DATABASE_URL.startswith("postgresql+asyncpg://"):
 # ---------------------------------------------------------------------------
 # Async Engine
 # ---------------------------------------------------------------------------
+_ssl_ctx = ssl.create_default_context()
+_ssl_ctx.check_hostname = False
+_ssl_ctx.verify_mode = ssl.CERT_NONE
+
 engine = create_async_engine(
     _DATABASE_URL,
-    # ── Pool sizing ──────────────────────────────────────────────────────────
-    # The request hot path never touches the DB (nutrition lookups are served
-    # from an in-memory cache); connections are only used by post-response
-    # scan writes and the periodic cache refresh. Total max = 10, well under
-    # the Supabase free-tier 60-connection cap.
-    pool_size=5,        # persistent connections kept alive in the pool
-    max_overflow=5,     # extra connections allowed during write bursts
-    # ── Pool durability ─────────────────────────────────────────────────────
-    pool_recycle=1800,  # recycle connections every 30 min — prevents stale
-                        # TCP handles and serverside idle-timeout disconnects
-    pool_pre_ping=True, # issue a lightweight SELECT 1 before handing a
-                        # connection to a query; transparently replaces dead
-                        # connections without surfacing errors to callers
-    # ── Diagnostics (disable in production if log volume is a concern) ──────
+    pool_size=5,
+    max_overflow=5,
+    pool_recycle=1800,
+    pool_pre_ping=True,
     echo=False,
+    connect_args={"ssl": _ssl_ctx},
 )
 
 # ---------------------------------------------------------------------------
