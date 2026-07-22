@@ -423,7 +423,75 @@ const sl = StyleSheet.create({
 });
 
 // ─── AI Nutrition Insight Card ────────────────────────────────────────────────
+type InsightData = { insight: string; tip: string; action: string };
+
 function AIInsightCard() {
+  const [data,    setData]    = useState<InsightData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error,   setError]   = useState<string | null>(null);
+
+  const fetchInsight = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await apiFetch("/api/v1/nutrition-insight");
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.detail ?? `Server error ${res.status}`);
+      }
+      const json: InsightData = await res.json();
+      setData(json);
+    } catch (err) {
+      console.log("[AIInsightCard] Failed to fetch insight:", err instanceof Error ? err.message : String(err));
+      setError(err instanceof Error ? err.message : "Could not load insight.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Fetch on mount
+  useEffect(() => { fetchInsight(); }, [fetchInsight]);
+
+  // ── Loading skeleton ───────────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <View style={[ai.card, CARD_SHADOW]}>
+        <View style={ai.hdr}>
+          <View style={ai.hdrLeft}>
+            <Text style={ai.star}>★</Text>
+            <Text style={ai.label}>AI Nutrition Insight</Text>
+          </View>
+          <View style={[ai.livePill, { backgroundColor: "rgba(22,160,133,0.07)" }]}>
+            <View style={[ai.liveDot, { backgroundColor: "#94A3B8" }]} />
+            <Text style={[ai.liveText, { color: "#94A3B8" }]}>Loading…</Text>
+          </View>
+        </View>
+        <View style={ai.skeletonLine} />
+        <View style={[ai.skeletonLine, { width: "70%" }]} />
+        <View style={[ai.skeletonLine, { width: "50%", marginTop: 4 }]} />
+      </View>
+    );
+  }
+
+  // ── Error state ────────────────────────────────────────────────────────────
+  if (error) {
+    return (
+      <View style={[ai.card, CARD_SHADOW]}>
+        <View style={ai.hdr}>
+          <View style={ai.hdrLeft}>
+            <Text style={ai.star}>★</Text>
+            <Text style={ai.label}>AI Nutrition Insight</Text>
+          </View>
+        </View>
+        <Text style={ai.errorTxt}>⚠️ {error}</Text>
+        <TouchableOpacity style={ai.retryBtn} onPress={fetchInsight} activeOpacity={0.8}>
+          <Text style={ai.retryTxt}>🔄 Try Again</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // ── Live data ──────────────────────────────────────────────────────────────
   return (
     <View style={[ai.card, CARD_SHADOW]}>
       <View style={ai.hdr}>
@@ -431,24 +499,30 @@ function AIInsightCard() {
           <Text style={ai.star}>★</Text>
           <Text style={ai.label}>AI Nutrition Insight</Text>
         </View>
-        {/* Static preview content — labelled honestly, not "Live". */}
         <View style={ai.livePill}>
           <View style={ai.liveDot} />
-          <Text style={ai.liveText}>Sample</Text>
+          <Text style={ai.liveText}>Live</Text>
         </View>
       </View>
 
-      <Text style={ai.body}>
-        You're just <Text style={ai.boldTxt}>14g away</Text> from crushing your protein goal — add an extra serving of paneer (about 100g) to your dinner and you'll smash it! Pair it with{" "}
-        <Text style={[ai.boldTxt, { color: "#16A085" }]}>2 rotis instead of one</Text> for the perfect finish! 💪
-      </Text>
+      {/* Main insight */}
+      <Text style={ai.body}>{data?.insight}</Text>
 
+      {/* Tip row */}
+      {data?.tip ? (
+        <View style={ai.tipRow}>
+          <Text style={ai.tipIcon}>💡</Text>
+          <Text style={ai.tipTxt}>{data.tip}</Text>
+        </View>
+      ) : null}
+
+      {/* Action buttons */}
       <View style={ai.btnRow}>
         <TouchableOpacity style={ai.primaryBtn} activeOpacity={0.82}>
-          <Text style={ai.primaryTxt}>⚡ Auto-Optimize Dinner</Text>
+          <Text style={ai.primaryTxt}>⚡ {data?.action ?? "View Details"}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={ai.altBtn} activeOpacity={0.82}>
-          <Text style={ai.altTxt}>💡 Alternative</Text>
+        <TouchableOpacity style={ai.altBtn} onPress={fetchInsight} activeOpacity={0.82}>
+          <Text style={ai.altTxt}>🔄 Refresh</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -466,15 +540,34 @@ const ai = StyleSheet.create({
   liveText:   { fontSize: 8, fontWeight: "700", color: "#16A085" },
   body:       { fontSize: 13, fontWeight: "500", color: "#2C3E50", lineHeight: 20 },
   boldTxt:    { fontWeight: "700", color: CHARCOAL },
+  tipRow:     { flexDirection: "row", alignItems: "flex-start", gap: 6, backgroundColor: "rgba(22,160,133,0.06)", borderRadius: 12, padding: 10 },
+  tipIcon:    { fontSize: 13 },
+  tipTxt:     { flex: 1, fontSize: 12, fontWeight: "500", color: "#2C3E50", lineHeight: 18 },
   btnRow:     { flexDirection: "row", gap: 8 },
   primaryBtn: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#2ECC71", borderRadius: 22, paddingVertical: 10, shadowColor: "#2ECC71", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.38, shadowRadius: 10, elevation: 6 },
   primaryTxt: { fontSize: 11, fontWeight: "700", color: WHITE },
   altBtn:     { alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "#BDC3C7", borderRadius: 22, paddingVertical: 10, paddingHorizontal: 13 },
   altTxt:     { fontSize: 11, fontWeight: "600", color: "#2C3E50" },
+  // Loading skeleton
+  skeletonLine: { height: 12, borderRadius: 6, backgroundColor: "rgba(0,0,0,0.07)", width: "100%" },
+  // Error state
+  errorTxt:   { fontSize: 12, fontWeight: "500", color: "#EF4444", lineHeight: 18 },
+  retryBtn:   { alignSelf: "flex-start", borderWidth: 1, borderColor: "#EF4444", borderRadius: 16, paddingHorizontal: 14, paddingVertical: 7 },
+  retryTxt:   { fontSize: 11, fontWeight: "700", color: "#EF4444" },
 });
 
 // ─── Activity Thread ──────────────────────────────────────────────────────────
-function ActivityThread() {
+const MEAL_EMOJIS_AT: Record<string, string> = {
+  Breakfast: "🥘", Lunch: "🍛", Snacks: "🍎", Dinner: "🌙",
+};
+
+interface ActivityThreadProps {
+  meals:         LoggedMeal[];   // today's real meals from API
+  calorieTarget: number;         // from user profile
+  loading:       boolean;
+}
+
+function ActivityThread({ meals, calorieTarget, loading }: ActivityThreadProps) {
   const [showSnacks, setShowSnacks] = useState(false);
   const pulse = useRef(new Animated.Value(1)).current;
 
@@ -489,98 +582,155 @@ function ActivityThread() {
     return () => anim.stop();
   }, []);
 
+  // ── Derived values from real data ──────────────────────────────────────────
+  const totalConsumed = Math.round(meals.reduce((s, m) => s + m.total_calories, 0));
+  const remaining     = Math.max(calorieTarget - totalConsumed, 0);
+  const isOver        = totalConsumed > calorieTarget;
+  const overBy        = Math.max(totalConsumed - calorieTarget, 0);
+
+  // Filter snack recommendations based on remaining calories
+  const recommendedSnacks = SNACK_OPTIONS.filter(s => s.kcal <= (remaining > 0 ? remaining : 400));
+
+  // Format logged_at timestamp → "HH:MM AM/PM"
+  function formatTime(iso: string): string {
+    const d = new Date(iso);
+    let h = d.getHours();
+    const m = String(d.getMinutes()).padStart(2, "0");
+    const ampm = h >= 12 ? "PM" : "AM";
+    h = h % 12 || 12;
+    return `${h}:${m} ${ampm}`;
+  }
+
   return (
     <View style={[at.card, CARD_SHADOW]}>
       <View style={at.hdr}>
         <Text style={at.hdrTitle}>⏰ Activity Thread</Text>
-        <TouchableOpacity style={at.impTag} activeOpacity={0.75}>
-          <Star size={9} color="#F97316" fill="#F97316" />
-          <Text style={at.impTagTxt}>Mark Important</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Breakfast */}
-      <View style={at.row}>
-        <View style={at.nodeCol}>
-          <View style={at.lineGray} />
-          <View style={at.dotGreen} />
-        </View>
-        <View style={at.rowBody}>
-          <Text style={at.time}>08:00 AM</Text>
-          <Text style={at.name}>Masala Dosa + Chutney</Text>
-          <Text style={at.sub}>380 kcal · Breakfast</Text>
+        {/* Live indicator */}
+        <View style={at.liveBadge}>
+          <View style={at.liveDotAt} />
+          <Text style={at.liveBadgeTxt}>Today</Text>
         </View>
       </View>
 
-      {/* Lunch */}
-      <View style={at.row}>
-        <View style={at.nodeCol}>
-          <View style={at.lineGray} />
-          <View style={at.dotGreen} />
+      {/* ── Loading state ───────────────────────────────────────────── */}
+      {loading && (
+        <View style={at.loadingRow}>
+          <Text style={at.loadingTxt}>Loading today's activity…</Text>
         </View>
-        <View style={at.rowBody}>
-          <Text style={at.time}>01:00 PM</Text>
-          <Text style={at.name}>Paneer Butter Masala + Roti</Text>
-          <Text style={at.sub}>470 kcal · Lunch</Text>
-        </View>
-      </View>
+      )}
 
-      {/* NOW divider */}
-      <View style={at.row}>
-        <View style={at.nodeCol}>
-          <View style={at.lineOrange} />
-          <Animated.View style={[at.dotOrange, { opacity: pulse }]} />
+      {/* ── Empty state ─────────────────────────────────────────────── */}
+      {!loading && meals.length === 0 && (
+        <View style={at.emptyRow}>
+          <Text style={at.emptyTxt}>No meals logged yet today.</Text>
+          <Text style={at.emptySub}>Scan your first meal to see it here! 📸</Text>
         </View>
-        <View style={[at.rowBody, at.nowDivRow]}>
-          <View style={at.nowDash} />
-          <View style={at.nowBadge}>
-            <Animated.View style={[at.nowBadgeDot, { opacity: pulse }]} />
-            <Text style={at.nowBadgeTxt}>Now</Text>
-          </View>
-          <View style={at.nowDash} />
-        </View>
-      </View>
+      )}
 
-      {/* Optimal Target Window */}
-      <View style={at.row}>
-        <View style={at.nodeCol}>
-          <Animated.View style={[at.dotAmber, { opacity: pulse }]} />
-        </View>
-        <View style={at.rowBodyLast}>
-          <Text style={[at.time, { color: "#F39C12" }]}>08:30 PM</Text>
-          <Text style={[at.name, { color: "#F39C12" }]}>Optimal Target Window</Text>
-          <Text style={[at.sub, { marginBottom: 8 }]}>Deficit: 160 kcal · Protein remaining. Tap to browse options.</Text>
-
-          <TouchableOpacity
-            style={at.ctaCard}
-            onPress={() => setShowSnacks((s) => !s)}
-            activeOpacity={0.8}
-          >
-            <View style={at.ctaTop}>
-              <View style={at.ctaDot} />
-              <Text style={at.ctaTxt}>
-                {showSnacks ? "⚡ Hide Options" : "⚡ Quick Log Recommended Snack"}
+      {/* ── Real logged meals ────────────────────────────────────────── */}
+      {!loading && meals.map((meal, idx) => {
+        const itemNames = (meal.food_items as { item_name: string }[])
+          .map(f => f.item_name).join(", ");
+        const isLast = idx === meals.length - 1;
+        return (
+          <View key={meal.id} style={at.row}>
+            <View style={at.nodeCol}>
+              {!isLast && <View style={at.lineGray} />}
+              <View style={at.dotGreen} />
+            </View>
+            <View style={isLast ? at.rowBody : at.rowBody}>
+              <Text style={at.time}>{formatTime(String(meal.logged_at))}</Text>
+              <Text style={at.name} numberOfLines={2}>
+                {MEAL_EMOJIS_AT[meal.meal_type] ?? "🍽️"} {itemNames || meal.meal_type}
+              </Text>
+              <Text style={at.sub}>
+                {Math.round(meal.total_calories)} kcal · {meal.meal_type}
+                {"  "}P {Math.round(meal.total_protein_g)}g · C {Math.round(meal.total_carbs_g)}g · F {Math.round(meal.total_fat_g)}g
               </Text>
             </View>
-            {showSnacks && (
-              <View style={at.snackList}>
-                {SNACK_OPTIONS.map((s, i) => (
-                  <View key={i} style={[at.snackRow, i < SNACK_OPTIONS.length - 1 && at.snackDiv]}>
-                    <Text style={at.snackEmoji}>{s.emoji}</Text>
-                    <View style={{ flex: 1 }}>
-                      <Text style={at.snackName}>{s.name}</Text>
-                      <Text style={at.snackSub}>{s.sub}</Text>
-                    </View>
-                    <Text style={at.snackKcal}>
-                      {s.kcal}<Text style={at.snackUnit}> kcal</Text>
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            )}
-          </TouchableOpacity>
+          </View>
+        );
+      })}
+
+      {/* ── NOW divider (only show if there are meals or loading is done) ── */}
+      {!loading && (
+        <View style={at.row}>
+          <View style={at.nodeCol}>
+            <View style={at.lineOrange} />
+            <Animated.View style={[at.dotOrange, { opacity: pulse }]} />
+          </View>
+          <View style={[at.rowBody, at.nowDivRow]}>
+            <View style={at.nowDash} />
+            <View style={at.nowBadge}>
+              <Animated.View style={[at.nowBadgeDot, { opacity: pulse }]} />
+              <Text style={at.nowBadgeTxt}>Now</Text>
+            </View>
+            <View style={at.nowDash} />
+          </View>
         </View>
-      </View>
+      )}
+
+      {/* ── Calorie summary + snack CTA ──────────────────────────────── */}
+      {!loading && (
+        <View style={at.row}>
+          <View style={at.nodeCol}>
+            <Animated.View style={[at.dotAmber, { opacity: pulse }]} />
+          </View>
+          <View style={at.rowBodyLast}>
+            {isOver ? (
+              <>
+                <Text style={[at.name, { color: "#EF4444" }]}>Over Target</Text>
+                <Text style={[at.sub, { marginBottom: 8, color: "#EF4444" }]}>
+                  {overBy} kcal over · {totalConsumed} / {calorieTarget} kcal consumed
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text style={[at.name, { color: "#F39C12" }]}>
+                  {remaining > 0 ? "Calories Remaining" : "Target Reached 🎯"}
+                </Text>
+                <Text style={[at.sub, { marginBottom: 8 }]}>
+                  {remaining > 0
+                    ? `${remaining} kcal left · ${totalConsumed} / ${calorieTarget} kcal consumed`
+                    : `${totalConsumed} / ${calorieTarget} kcal — great work today!`}
+                </Text>
+              </>
+            )}
+
+            {/* Only show snack CTA if there are calories left */}
+            {remaining > 0 && recommendedSnacks.length > 0 && (
+              <TouchableOpacity
+                style={at.ctaCard}
+                onPress={() => setShowSnacks((s) => !s)}
+                activeOpacity={0.8}
+              >
+                <View style={at.ctaTop}>
+                  <View style={at.ctaDot} />
+                  <Text style={at.ctaTxt}>
+                    {showSnacks ? "⚡ Hide Options" : "⚡ Quick Log Recommended Snack"}
+                  </Text>
+                </View>
+                {showSnacks && (
+                  <View style={at.snackList}>
+                    {recommendedSnacks.map((s, i) => (
+                      <View key={i} style={[at.snackRow, i < recommendedSnacks.length - 1 && at.snackDiv]}>
+                        <Text style={at.snackEmoji}>{s.emoji}</Text>
+                        <View style={{ flex: 1 }}>
+                          <Text style={at.snackName}>{s.name}</Text>
+                          <Text style={at.snackSub}>{s.sub}</Text>
+                        </View>
+                        <Text style={at.snackKcal}>
+                          {s.kcal}<Text style={at.snackUnit}> kcal</Text>
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      )}
     </View>
   );
 }
@@ -589,8 +739,16 @@ const at = StyleSheet.create({
   card:        { backgroundColor: WHITE, borderRadius: 20, padding: 16, borderWidth: 1, borderColor: "rgba(0,0,0,0.04)" },
   hdr:         { flexDirection: "row", alignItems: "center", marginBottom: 14 },
   hdrTitle:    { flex: 1, fontSize: 11, fontWeight: "700", color: MUTED, letterSpacing: 1.1, textTransform: "uppercase" },
-  impTag:      { flexDirection: "row", alignItems: "center", gap: 3, backgroundColor: "rgba(249,115,22,0.08)", borderWidth: 1, borderColor: "rgba(249,115,22,0.3)", borderRadius: 16, paddingHorizontal: 8, paddingVertical: 3 },
-  impTagTxt:   { fontSize: 9, fontWeight: "700", color: "#F97316" },
+  // Live badge
+  liveBadge:   { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: "rgba(34,197,94,0.1)", borderWidth: 1, borderColor: "rgba(34,197,94,0.25)", borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
+  liveDotAt:   { width: 5, height: 5, borderRadius: 2.5, backgroundColor: "#22C55E" },
+  liveBadgeTxt: { fontSize: 9, fontWeight: "700", color: "#22C55E" },
+  // Loading / empty
+  loadingRow:  { paddingVertical: 16, alignItems: "center" },
+  loadingTxt:  { fontSize: 12, fontWeight: "500", color: MUTED },
+  emptyRow:    { paddingVertical: 16, alignItems: "center", gap: 4 },
+  emptyTxt:    { fontSize: 13, fontWeight: "600", color: CHARCOAL },
+  emptySub:    { fontSize: 11, fontWeight: "400", color: MUTED },
 
   row:         { flexDirection: "row" },
   nodeCol:     { width: 38, alignItems: "center" },
@@ -643,6 +801,8 @@ export default function ProgressScreen() {
   // Keyed by date string YYYY-MM-DD; loaded on demand when a date is selected
   const [mealCache, setMealCache] = useState<Record<string, LoggedMeal[]>>({});
   const [loadingMeals, setLoadingMeals] = useState(false);
+  // User profile — needed for calorie target in ActivityThread
+  const [calorieTarget, setCalorieTarget] = useState(2000);
   // Use a ref to check cache membership without adding mealCache to useCallback deps
   // (adding it would recreate fetchMealsForDate on every fetch → infinite loop).
   // This is intentional: the ref provides a stable reference to the latest cache state
@@ -676,6 +836,14 @@ export default function ProgressScreen() {
 
   // Fetch today's meals on mount
   useEffect(() => { fetchMealsForDate(TODAY_STR); }, []);
+
+  // Fetch user profile for calorie target
+  useEffect(() => {
+    apiFetch("/api/v1/profile")
+      .then(r => r.ok ? r.json() : null)
+      .then((p) => { if (p?.calorie_target) setCalorieTarget(p.calorie_target); })
+      .catch((err) => console.log("[ProgressScreen] Failed to fetch profile:", err instanceof Error ? err.message : String(err)));
+  }, []);
 
   // Fetch when selected date changes
   useEffect(() => {
@@ -784,8 +952,7 @@ export default function ProgressScreen() {
         {/* ── Sample-data disclosure ────────────────────────────────── */}
         <View style={styles.sampleBanner}>
           <Text style={styles.sampleBannerText}>
-            Trends, sleep &amp; coaching cards below show sample data while history
-            analytics are being wired up. Your logged meals and the calendar are live.
+            Trends &amp; sleep cards show sample data. Calendar, Activity Thread and AI Insight are live.
           </Text>
         </View>
 
@@ -870,7 +1037,11 @@ export default function ProgressScreen() {
         <AIInsightCard />
 
         {/* ── Activity Thread ───────────────────────────────────────── */}
-        <ActivityThread />
+        <ActivityThread
+          meals={mealCache[TODAY_STR] ?? []}
+          calorieTarget={calorieTarget}
+          loading={loadingMeals && (mealCache[TODAY_STR] === undefined)}
+        />
 
         {/* ── Selected day detail ───────────────────────────────────── */}
         {selectedDate && (

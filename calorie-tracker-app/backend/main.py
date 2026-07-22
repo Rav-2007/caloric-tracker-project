@@ -1013,6 +1013,137 @@ def _planned_response(row: PlannedMeal) -> PlannedMealResponse:
     )
 
 
+# ---------------------------------------------------------------------------
+# AI Nutrition Insight
+# ---------------------------------------------------------------------------
+
+class NutritionInsightResponse(BaseModel):
+    insight: str
+    tip: str
+    action: str
+
+
+INSIGHT_SYSTEM_PROMPT = """
+You are a friendly, expert Indian nutrition coach. 
+Given a user's logged meals for today and their calorie/macro targets, 
+produce a short, actionable nutrition insight in plain English.
+
+Rules:
+- Keep insight to 1-2 sentences (max 40 words). Be specific, mention actual numbers.
+- Keep tip to 1 short sentence (max 20 words). Suggest a real Indian food fix.
+- Keep action to 3-5 words (a button label like "Add Paneer Salad" or "Cut Evening Rice").
+- Be warm, positive, and motivating.
+- Do NOT use markdown, asterisks, or any formatting symbols.
+- If no meals are logged, encourage the user to log their first meal.
+- Return only valid JSON with keys: insight, tip, action.
+""".strip()
+
+
+@app.get(
+    "/api/v1/nutrition-insight",
+    response_model=NutritionInsightResponse,
+    tags=["analysis"],
+    summary="AI-generated nutrition insight for today based on logged meals",
+    dependencies=[Depends(require_api_key)],
+)
+async def nutrition_insight(
+    db: AsyncSession = Depends(get_async_db),
+) -> NutritionInsightResponse:
+    # 1. Fetch today's meals
+    today = datetime.now(_APP_TZ).date()
+    try:
+        stmt = (
+            select(LoggedMeal)
+            .where(_local_day(LoggedMeal.logged_at) == today)
+            .order_by(LoggedMeal.logged_at.asc())
+        )
+        rows = (await db.execute(stmt)).scalars().all()
+    except Exception as exc:
+        logger.warning("DB unavailable for nutrition insight: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database is currently unavailable.",
+        ) from exc
+
+    # 2. Fetch user profile for targets
+    try:
+        profile = (await db.execute(select(UserProfile).limit(1))).scalar_one_or_none()
+    except Exception:
+        profile = None
+
+    calorie_target  = profile.calorie_target   if profile else 2000
+    protein_target  = profile.protein_target_g if profile else 120
+    carbs_target    = profile.carbs_target_g   if profile else 250
+    fat_target      = profile.fat_target_g     if profile else 65
+
+    # 3. Build a compact meal summary for Gemini
+    total_kcal    = round(sum(r.total_calories   for r in rows), 1)
+    total_protein = round(sum(r.total_protein_g  for r in rows), 1)
+    total_carbs   = round(sum(r.total_carbs_g    for r in rows), 1)
+    total_fat     = round(sum(r.total_fat_g      for r in rows), 1)
+
+    meal_lines = []
+    for r in rows:
+        items = ", ".join(
+            f['item_name'] for f in (r.food_items_json or [])
+        )
+        meal_lines.append(
+            f"- {r.meal_type} ({round(r.total_calories)} kcal): {items or 'unknown items'}"
+        )
+
+    meals_text = "\n".join(meal_lines) if meal_lines else "No meals logged yet today."
+
+    user_context = (
+        f"Targets: {calorie_target} kcal, {protein_target}g protein, "
+        f"{carbs_target}g carbs, {fat_target}g fat.\n"
+        f"Today so far: {total_kcal} kcal, {total_protein}g protein, "
+        f"{total_carbs}g carbs, {total_fat}g fat.\n\n"
+        f"Meals logged:\n{meals_text}"
+    )
+
+    # 4. Call Gemini
+    try:
+        response = await asyncio.wait_for(
+            gemini_client.aio.models.generate_content(
+                model=MODEL_ID,
+                contents=[user_context],
+                config=types.GenerateContentConfig(
+                    system_instruction=INSIGHT_SYSTEM_PROMPT,
+                    response_mime_type="application/json",
+                    temperature=0.7,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                ),
+            ),
+            timeout=20,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Gemini timed out generating insight.",
+        )
+    except Exception as exc:
+        logger.exception("Gemini error for nutrition insight: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not generate insight right now.",
+        ) from exc
+
+    # 5. Parse response
+    try:
+        raw = _json.loads(response.text)
+        return NutritionInsightResponse(
+            insight=str(raw.get("insight", "")),
+            tip=str(raw.get("tip", "")),
+            action=str(raw.get("action", "View Details")),
+        )
+    except Exception as exc:
+        logger.exception("Failed to parse Gemini insight response: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unexpected response from AI service.",
+        ) from exc
+
+
 @app.post(
     "/api/v1/planned-meals",
     response_model=PlannedMealResponse,
