@@ -1,11 +1,13 @@
 import React, { useEffect, useRef } from "react";
 import {
   Animated,
+  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
+import { BlurView } from "expo-blur";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, {
   Circle,
@@ -159,24 +161,32 @@ export function FloatingNav({
       </View>
 
       {/* Glassmorphic island pill */}
-      <View style={s.island}>
-        <NavItem
-          icon={(c) => <Home            size={20} color={c} strokeWidth={2} />}
-          label="Home"     active={active === "home"}     onPress={onHome}
-        />
-        <NavItem
-          icon={(c) => <BookOpen        size={20} color={c} strokeWidth={2} />}
-          label="Diary"    active={active === "diary"}    onPress={onDiary}
-        />
-        <View style={s.slot} />
-        <NavItem
-          icon={(c) => <BarChart2       size={20} color={c} strokeWidth={2} />}
-          label="Progress" active={active === "progress"} onPress={onProgress}
-        />
-        <NavItem
-          icon={(c) => <MoreHorizontal  size={20} color={c} strokeWidth={2} />}
-          label="More"     onPress={onMore}
-        />
+      <View style={s.islandBorder}>
+        <BlurView
+          intensity={Platform.OS === "android" ? 0 : 72}
+          tint="light"
+          style={s.island}
+        >
+          {/* Frosted white fill — visible on Android where BlurView has no effect */}
+          <View style={s.islandFill} pointerEvents="none" />
+          <NavItem
+            icon={(c) => <Home            size={20} color={c} strokeWidth={2} />}
+            label="Home"     active={active === "home"}     onPress={onHome}
+          />
+          <NavItem
+            icon={(c) => <BookOpen        size={20} color={c} strokeWidth={2} />}
+            label="Diary"    active={active === "diary"}    onPress={onDiary}
+          />
+          <View style={s.slot} />
+          <NavItem
+            icon={(c) => <BarChart2       size={20} color={c} strokeWidth={2} />}
+            label="Progress" active={active === "progress"} onPress={onProgress}
+          />
+          <NavItem
+            icon={(c) => <MoreHorizontal  size={20} color={c} strokeWidth={2} />}
+            label="More"     onPress={onMore}
+          />
+        </BlurView>
       </View>
     </View>
   );
@@ -214,20 +224,42 @@ const s = StyleSheet.create({
     shadowRadius:   28,
     elevation:      20,
   },
+  // ── Glass island ─────────────────────────────────────────────────────────────
+  // islandBorder: thin frosted border ring around the BlurView
+  islandBorder: {
+    marginHorizontal: 14,
+    alignSelf:        "stretch",
+    borderRadius:     34,
+    borderWidth:      1,
+    borderColor:      "rgba(255,255,255,0.55)",
+    overflow:         "hidden",
+    shadowColor:      "#55CDFC",
+    shadowOffset:     { width: 0, height: 8 },
+    shadowOpacity:    0.18,
+    shadowRadius:     24,
+    elevation:        18,
+  },
   island: {
-    marginHorizontal:  14,
     alignSelf:         "stretch",
-    height:            60,
-    borderRadius:      30,
-    backgroundColor:   "rgba(255,255,255,0.96)",
+    height:            62,
+    borderRadius:      34,
     flexDirection:     "row",
     alignItems:        "center",
     paddingHorizontal: 6,
-    shadowColor:       "#000",
-    shadowOffset:      { width: 0, height: 8 },
-    shadowOpacity:     0.10,
-    shadowRadius:      32,
-    elevation:         16,
+    overflow:          "hidden",
+    // BlurView backgroundColor must be transparent so the blur shows through
+    backgroundColor:   "transparent",
+  },
+  // Semi-transparent white fill layered over the blur — gives the frosted look
+  // On Android (no blur) this becomes the only visual background
+  islandFill: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius:    34,
+    backgroundColor: Platform.OS === "android"
+      ? "rgba(255,255,255,0.94)"   // solid on Android — no native blur
+      : "rgba(255,255,255,0.55)",  // translucent on iOS — lets blur breathe
+    borderWidth:  0.5,
+    borderColor:  "rgba(255,255,255,0.7)",
   },
   slot:    { flex: 1.2 },
   item:    { flex: 1, alignItems: "center", justifyContent: "center" },

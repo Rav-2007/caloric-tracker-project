@@ -15,9 +15,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Circle, Defs, LinearGradient, Stop } from "react-native-svg";
 import {
-  ArrowLeft,
   Calendar,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Coffee,
@@ -41,7 +39,7 @@ import { slotDateTimeISO, toDateParam } from "@/types/api";
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const BG       = "#F8FAFC";
-const SKY      = "#55CDFC";
+const SKY      = "#4A9EFF";
 const CHARCOAL = "#1A1D20";
 const MUTED    = "#94A3B8";
 const WHITE    = "#FFFFFF";
@@ -49,6 +47,101 @@ const CARD_SHADOW = {
   shadowColor: "#000", shadowOffset: { width: 0, height: 4 },
   shadowOpacity: 0.07, shadowRadius: 16, elevation: 6,
 } as const;
+
+// ─── Week strip calendar ──────────────────────────────────────────────────────
+const WEEK_DAYS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+const MONTH_NAMES_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+function getWeekDates(anchor: Date): Date[] {
+  const dow = anchor.getDay();
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(anchor);
+    d.setDate(anchor.getDate() - dow + i);
+    return d;
+  });
+}
+
+function WeekStripCalendar({
+  selected,
+  onSelect,
+  onPrevWeek,
+  onNextWeek,
+  onOpenPicker,
+}: {
+  selected: Date;
+  onSelect: (d: Date) => void;
+  onPrevWeek: () => void;
+  onNextWeek: () => void;
+  onOpenPicker: () => void;
+}) {
+  const todayKey = toDateParam(new Date());
+  const selKey   = toDateParam(selected);
+  const week     = getWeekDates(selected);
+  const monthLabel = `${MONTH_NAMES_SHORT[week[3].getMonth()]} ${week[3].getFullYear()}`;
+
+  return (
+    <View style={wk.card}>
+      {/* Month navigation row */}
+      <View style={wk.navRow}>
+        <TouchableOpacity style={wk.navBtn} onPress={onPrevWeek} activeOpacity={0.7}>
+          <ChevronLeft size={18} color={CHARCOAL} strokeWidth={2.5} />
+        </TouchableOpacity>
+        <TouchableOpacity onPress={onOpenPicker} activeOpacity={0.75}>
+          <Text style={wk.monthTitle}>
+            {selected.toLocaleDateString("en-IN", { weekday: "short" })},{" "}
+            {selected.getDate()} {MONTH_NAMES_SHORT[selected.getMonth()]}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={wk.navBtn} onPress={onNextWeek} activeOpacity={0.7}>
+          <ChevronRight size={18} color={CHARCOAL} strokeWidth={2.5} />
+        </TouchableOpacity>
+      </View>
+
+      {/* Day labels */}
+      <View style={wk.daysRow}>
+        {WEEK_DAYS.map((d) => (
+          <Text key={d} style={wk.dayLabel}>{d}</Text>
+        ))}
+      </View>
+
+      {/* Date numbers */}
+      <View style={wk.datesRow}>
+        {week.map((d) => {
+          const k      = toDateParam(d);
+          const isSel  = k === selKey;
+          const isToday= k === todayKey;
+          return (
+            <TouchableOpacity
+              key={k}
+              style={[wk.dateCell, isSel && wk.dateCellSel]}
+              onPress={() => onSelect(d)}
+              activeOpacity={0.7}
+            >
+              <Text style={[wk.dateNum, isToday && wk.dateTodayNum, isSel && wk.dateSelNum]}>
+                {d.getDate()}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+const wk = StyleSheet.create({
+  card:       { backgroundColor: WHITE, borderRadius: 20, marginHorizontal: 20, marginBottom: 12, padding: 16, ...CARD_SHADOW },
+  navRow:     { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 14 },
+  navBtn:     { width: 32, height: 32, borderRadius: 16, backgroundColor: "#F1F5F9", alignItems: "center", justifyContent: "center" },
+  monthTitle: { fontSize: 17, fontWeight: "700", color: CHARCOAL, letterSpacing: -0.3 },
+  daysRow:    { flexDirection: "row", marginBottom: 8 },
+  dayLabel:   { flex: 1, textAlign: "center", fontSize: 11, fontWeight: "600", color: MUTED },
+  datesRow:   { flexDirection: "row" },
+  dateCell:   { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 6, borderRadius: 22 },
+  dateCellSel:{ backgroundColor: SKY },
+  dateNum:    { fontSize: 15, fontWeight: "600", color: CHARCOAL },
+  dateTodayNum: { color: SKY, fontWeight: "800" },
+  dateSelNum: { color: WHITE, fontWeight: "800" },
+});
 
 const MEAL_SECTIONS = [
   { key: "Breakfast", label: "Breakfast", color: "#F97316", bg: "#FEF3C7", icon: Coffee  },
@@ -79,7 +172,38 @@ const STAPLES: { name: string; grams: number; emoji: string }[] = [
   { name: "Boiled Eggs (2)",          grams: 100, emoji: "🥚" },
 ];
 
-// ─── Calorie ring (animated) ──────────────────────────────────────────────────
+// ─── Calorie Summary Strip ────────────────────────────────────────────────────
+function CalorieSummaryStrip({ consumed, remaining, target }: { consumed: number; remaining: number; target: number }) {
+  return (
+    <View style={cs.strip}>
+      <View style={cs.col}>
+        <Text style={cs.colLabel}>Consumed</Text>
+        <Text style={cs.colVal}>{consumed.toLocaleString()} <Text style={cs.colUnit}>kcal</Text></Text>
+      </View>
+      <View style={cs.divider} />
+      <View style={cs.col}>
+        <Text style={cs.colLabel}>Remaining</Text>
+        <Text style={[cs.colVal, { color: remaining > 0 ? "#22C55E" : "#EF4444" }]}>
+          {remaining.toLocaleString()} <Text style={cs.colUnit}>kcal</Text>
+        </Text>
+      </View>
+      <View style={cs.divider} />
+      <View style={cs.col}>
+        <Text style={cs.colLabel}>Goal</Text>
+        <Text style={cs.colVal}>{target.toLocaleString()} <Text style={cs.colUnit}>kcal</Text></Text>
+      </View>
+    </View>
+  );
+}
+
+const cs = StyleSheet.create({
+  strip:   { flexDirection: "row", backgroundColor: WHITE, borderRadius: 18, marginHorizontal: 20, marginBottom: 12, padding: 16, ...CARD_SHADOW },
+  col:     { flex: 1, alignItems: "center", gap: 4 },
+  divider: { width: 1, backgroundColor: "#E2E8F0", marginHorizontal: 4 },
+  colLabel:{ fontSize: 11, fontWeight: "500", color: MUTED },
+  colVal:  { fontSize: 17, fontWeight: "800", color: CHARCOAL, letterSpacing: -0.5 },
+  colUnit: { fontSize: 11, fontWeight: "500", color: MUTED },
+});
 const RING = 96;
 const R    = 40;
 const CIRC = 2 * Math.PI * R;
@@ -552,14 +676,19 @@ export default function DiaryScreen() {
   const [loading, setLoading] = useState(false);
   const [calorieTarget, setCalorieTarget] = useState(2000);
 
-  // Plan picker state: which slot is open, and whether it's a swap of an existing plan
   const [pickerSlot, setPickerSlot] = useState<MealType | null>(null);
   const [swapTarget, setSwapTarget] = useState<PlannedMeal | null>(null);
-
-  // Calendar date picker
   const [showPicker, setShowPicker] = useState(false);
 
   const dayClass = classifyDay(date);
+
+  // Week navigation
+  const goToPrevWeek = useCallback(() => {
+    setDate(d => { const n = new Date(d); n.setDate(n.getDate() - 7); return n; });
+  }, []);
+  const goToNextWeek = useCallback(() => {
+    setDate(d => { const n = new Date(d); n.setDate(n.getDate() + 7); return n; });
+  }, []);
 
   // Fetch profile once on mount to get the user's real calorie target
   useEffect(() => {
@@ -703,188 +832,60 @@ export default function DiaryScreen() {
 
   const isFuture = dayClass === "future";
   const todaysPlans = dayClass === "today" ? planned : [];
-
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      {/* Header — back button · tappable date (opens calendar) · calendar button */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.navBtn} activeOpacity={0.7}>
-          <ArrowLeft size={20} color={CHARCOAL} strokeWidth={2} />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.headerCenter} onPress={() => setShowPicker(true)} activeOpacity={0.7}>
-          <View style={styles.headerDateRow}>
-            <Text style={styles.headerDate}>{fmtHeader(date)}</Text>
-            <ChevronDown size={16} color={MUTED} strokeWidth={2.5} />
-          </View>
-          <Text style={styles.headerSub}>{isFuture ? "Meal Plan" : "Food Diary"} · tap to change date</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => setShowPicker(true)} style={styles.navBtn} activeOpacity={0.7}>
-          <Calendar size={18} color={CHARCOAL} strokeWidth={2} />
+        <Text style={styles.headerTitle}>Diary</Text>
+        <TouchableOpacity onPress={() => setShowPicker(true)} style={styles.calBtn} activeOpacity={0.7}>
+          <Calendar size={20} color={CHARCOAL} strokeWidth={2} />
         </TouchableOpacity>
       </View>
 
-      {isFuture ? (
-        // ── PLAN MODE (future date) ──────────────────────────────────────────
-        <>
-          <FadeSlideIn key={`plansum-${dateKey}`}>
-            <View style={[styles.planSummary, CARD_SHADOW]}>
-              <View>
-                <Text style={styles.planSummaryLabel}>PLANNED</Text>
-                <Text style={styles.planSummaryHint}>
-                  {planned.length === 0 ? "Nothing planned yet" : `${planned.length} meal${planned.length !== 1 ? "s" : ""} lined up`}
-                </Text>
-              </View>
-              <View style={{ alignItems: "flex-end" }}>
-                <Text style={styles.planSummaryKcal}>{plannedTotal}</Text>
-                <Text style={styles.planSummarySub}>of {calorieTarget} kcal target</Text>
-              </View>
-            </View>
-          </FadeSlideIn>
-
-          <ScrollView
-            contentContainerStyle={{ paddingBottom: 120, paddingTop: 4 }}
-            showsVerticalScrollIndicator={false}
-          >
-            {MEAL_SECTIONS.map((sec, i) => (
-              <FadeSlideIn key={`${dateKey}-plan-${sec.key}`} index={i}>
-                <PlanSlotCard
-                  section={sec}
-                  planned={plannedBySection(sec.key)}
-                  onAdd={openAdd}
-                  onSwap={openSwap}
-                  onRemove={handleRemove}
-                />
-              </FadeSlideIn>
-            ))}
-            <Text style={styles.planFootnote}>
-              Plans are flexible — swap or remove anytime. When the day arrives, tap “Ate it” to log it.
-            </Text>
-          </ScrollView>
-        </>
-      ) : (
-        // ── LOG MODE (today / past) ──────────────────────────────────────────
-        <>
-          <FadeSlideIn key={`sum-${dateKey}`}>
-            <View style={[styles.summaryCard, CARD_SHADOW]}>
-              <CalorieRing consumed={consumed} target={calorieTarget} over={over} />
-              <View style={styles.summaryDivider} />
-              <View style={styles.summaryRight}>
-                <View style={styles.statusRow}>
-                  <Text style={[styles.statusNum, { color: over ? "#EF4444" : "#22C55E" }]}>
-                    {over ? overBy : remaining}
-                  </Text>
-                  <Text style={styles.statusUnit}>kcal {over ? "over" : "left"}</Text>
-                </View>
-                <Text style={styles.statusSub}>{consumed} of {calorieTarget} eaten</Text>
-                <View style={styles.macroPillRow}>
-                  <MacroPill label="Protein" val={protein} color="#F97316" />
-                  <View style={styles.macroDivider} />
-                  <MacroPill label="Carbs"   val={carbs}   color="#0EA5E9" />
-                  <View style={styles.macroDivider} />
-                  <MacroPill label="Fat"     val={fat}      color="#F59E0B" />
-                </View>
-              </View>
-            </View>
-          </FadeSlideIn>
-
-          <ScrollView
-            contentContainerStyle={{ paddingBottom: 120, paddingTop: 4 }}
-            showsVerticalScrollIndicator={false}
-            refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} />}
-          >
-            {todaysPlans.length > 0 && (
-              <FadeSlideIn key={`todayplan-${dateKey}`}>
-                <PlannedTodayCard
-                  planned={todaysPlans}
-                  onEat={handleEat}
-                  onSwap={openSwap}
-                  onRemove={handleRemove}
-                />
-              </FadeSlideIn>
-            )}
-
-            {loading && meals.length === 0 ? (
-              <ActivityIndicator color={SKY} style={{ marginTop: 40 }} />
-            ) : (
-              MEAL_SECTIONS.map((sec, i) => (
-                <FadeSlideIn key={`${dateKey}-${sec.key}`} index={i}>
-                  <MealSection
-                    section={sec}
-                    meals={mealsBySection(sec.key)}
-                    onScan={() => router.push("/camera")}
-                  />
-                </FadeSlideIn>
-              ))
-            )}
-
-            {consumed > 0 && (
-              <FadeSlideIn key={`ai-${dateKey}`} index={4}>
-                <View style={[styles.noteCard, CARD_SHADOW]}>
-                  <Text style={styles.noteLabel}>AI INSIGHT</Text>
-                  <Text style={styles.noteText}>
-                    {consumed > calorieTarget * 0.9
-                      ? `High intake day — ${consumed} kcal. Consider a lighter dinner.`
-                      : `Good day! ${consumed} kcal logged with ${remaining} kcal remaining.`}
-                  </Text>
-                </View>
-              </FadeSlideIn>
-            )}
-          </ScrollView>
-        </>
-      )}
-
-      <PlanPicker
-        slot={pickerSlot}
-        swapping={swapTarget != null}
-        onClose={closePicker}
-        onPick={handlePick}
-      />
-
-      <DatePickerModal
-        visible={showPicker}
+      <WeekStripCalendar
         selected={date}
         onSelect={setDate}
-        onClose={() => setShowPicker(false)}
+        onPrevWeek={goToPrevWeek}
+        onNextWeek={goToNextWeek}
+        onOpenPicker={() => setShowPicker(true)}
       />
 
-      <FloatingNav
-        active="diary"
-        onHome={() => router.navigate("/")}
-        onProgress={() => router.navigate("/progress")}
-        onDiary={() => {}}
-        onCamera={() => router.push("/camera")}
-        onMore={() => router.push("/profile")}
-      />
+      <CalorieSummaryStrip consumed={consumed} remaining={remaining} target={calorieTarget} />
+
+      {isFuture ? (
+        <ScrollView contentContainerStyle={{ paddingBottom: 120, paddingTop: 4 }} showsVerticalScrollIndicator={false}>
+          {MEAL_SECTIONS.map((sec, i) => (
+            <FadeSlideIn key={`${dateKey}-plan-${sec.key}`} index={i}>
+              <PlanSlotCard section={sec} planned={plannedBySection(sec.key)} onAdd={openAdd} onSwap={openSwap} onRemove={handleRemove} />
+            </FadeSlideIn>
+          ))}
+          <Text style={styles.planFootnote}>Plans are flexible — swap or remove anytime. When the day arrives, tap "Ate it" to log it.</Text>
+        </ScrollView>
+      ) : (
+        <ScrollView contentContainerStyle={{ paddingBottom: 120, paddingTop: 4 }} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} />}>
+          {todaysPlans.length > 0 && (
+            <FadeSlideIn key={`todayplan-${dateKey}`}><PlannedTodayCard planned={todaysPlans} onEat={handleEat} onSwap={openSwap} onRemove={handleRemove} /></FadeSlideIn>
+          )}
+          {loading && meals.length === 0 ? <ActivityIndicator color={SKY} style={{ marginTop: 40 }} /> : MEAL_SECTIONS.map((sec, i) => (
+            <FadeSlideIn key={`${dateKey}-${sec.key}`} index={i}><MealSection section={sec} meals={mealsBySection(sec.key)} onScan={() => router.push("/camera")} /></FadeSlideIn>
+          ))}
+          {consumed > 0 && (<FadeSlideIn key={`tip-${dateKey}`} index={4}><View style={[styles.noteCard, CARD_SHADOW]}><Text style={styles.noteLabel}>💡 Today's Tip</Text><Text style={styles.noteText}>{consumed > calorieTarget * 0.9 ? `You're close to your daily limit — ${consumed} kcal logged. Consider a lighter dinner.` : `Good progress! ${consumed} kcal logged with ${remaining} kcal remaining today.`}</Text></View></FadeSlideIn>)}
+        </ScrollView>
+      )}
+
+      <PlanPicker slot={pickerSlot} swapping={swapTarget != null} onClose={closePicker} onPick={handlePick} />
+      <DatePickerModal visible={showPicker} selected={date} onSelect={setDate} onClose={() => setShowPicker(false)} />
+      <FloatingNav active="diary" onHome={() => router.navigate("/")} onProgress={() => router.navigate("/progress")} onDiary={() => {}} onCamera={() => router.push("/camera")} onMore={() => router.push("/profile")} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root:   { flex: 1, backgroundColor: BG },
-  header: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 12 },
-  navBtn: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: WHITE, ...CARD_SHADOW },
-  headerCenter: { flex: 1, alignItems: "center", gap: 2 },
-  headerDateRow:{ flexDirection: "row", alignItems: "center", gap: 4 },
-  headerDate:   { fontSize: 16, fontWeight: "700", color: CHARCOAL, letterSpacing: -0.3 },
-  headerSub:    { fontSize: 11, fontWeight: "600", color: MUTED },
-  summaryCard:  { flexDirection: "row", alignItems: "center", backgroundColor: WHITE, borderRadius: 24, marginHorizontal: 20, marginBottom: 16, padding: 20, gap: 16 },
-  summaryDivider: { width: 1, height: 72, backgroundColor: "#EEF2FF" },
-  summaryRight: { flex: 1, gap: 8 },
-  statusRow:    { flexDirection: "row", alignItems: "baseline", gap: 5 },
-  statusNum:    { fontSize: 32, fontWeight: "800", letterSpacing: -1.2 },
-  statusUnit:   { fontSize: 12, fontWeight: "600", color: MUTED },
-  statusSub:    { fontSize: 11, fontWeight: "500", color: MUTED, marginTop: -4 },
-  macroPillRow: { flexDirection: "row", alignItems: "center", backgroundColor: "#F8FAFF", borderRadius: 12, padding: 10 },
-  macroDivider: { width: 1, height: 28, backgroundColor: "#E2E8F0", flex: 0, marginHorizontal: 8 },
+  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingVertical: 16 },
+  headerTitle: { fontSize: 24, fontWeight: "800", color: CHARCOAL, letterSpacing: -0.5 },
+  calBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: WHITE, alignItems: "center", justifyContent: "center", ...CARD_SHADOW },
   noteCard:     { backgroundColor: WHITE, borderRadius: 20, marginHorizontal: 20, marginTop: 4, padding: 16, gap: 6 },
-  noteLabel:    { fontSize: 9, fontWeight: "700", color: SKY, letterSpacing: 0.12 },
+  noteLabel:    { fontSize: 11, fontWeight: "700", color: SKY, letterSpacing: 0.1 },
   noteText:     { fontSize: 13, fontWeight: "500", color: CHARCOAL, lineHeight: 19 },
-
-  // Plan mode
-  planSummary:      { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: WHITE, borderRadius: 24, marginHorizontal: 20, marginBottom: 16, paddingHorizontal: 22, paddingVertical: 18 },
-  planSummaryLabel: { fontSize: 10, fontWeight: "700", color: MUTED, letterSpacing: 0.8, textTransform: "uppercase" },
-  planSummaryHint:  { fontSize: 13, fontWeight: "600", color: CHARCOAL, marginTop: 4 },
-  planSummaryKcal:  { fontSize: 30, fontWeight: "800", color: SKY, letterSpacing: -1 },
-  planSummarySub:   { fontSize: 10, fontWeight: "500", color: MUTED },
-  planFootnote:     { fontSize: 11, color: MUTED, fontStyle: "italic", textAlign: "center", paddingHorizontal: 32, marginTop: 6, lineHeight: 16 },
+  planFootnote: { fontSize: 11, color: MUTED, fontStyle: "italic", textAlign: "center", paddingHorizontal: 32, marginTop: 6, lineHeight: 16 },
 });

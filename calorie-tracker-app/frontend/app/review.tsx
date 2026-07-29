@@ -179,9 +179,9 @@ const ItemAdjustCard = React.memo(function ItemAdjustCard({ item, grams, accent,
   const range   = useMemo(() => sliderRange(item.estimated_grams), [item.estimated_grams]);
   const scale   = item.estimated_grams > 0 ? grams / item.estimated_grams : 1;
   const liveCal = Math.round(item.calories  * scale);
-  const livePro = (item.protein_g * scale).toFixed(1);
-  const liveCrb = (item.carbs_g   * scale).toFixed(1);
-  const liveFat = (item.fat_g     * scale).toFixed(1);
+  const livePro = Math.round(item.protein_g * scale);
+  const liveCrb = Math.round(item.carbs_g   * scale);
+  const liveFat = Math.round(item.fat_g     * scale);
   const isIcmr  = item.nutrition_source === "icmr_nin";
 
   return (
@@ -203,7 +203,7 @@ const ItemAdjustCard = React.memo(function ItemAdjustCard({ item, grams, accent,
               { color: isIcmr ? Colors.emerald : "#94A3B8" },
             ]}
           >
-            {isIcmr ? "ICMR-NIN" : "est."}
+            {isIcmr ? "✓ Verified" : "est."}
           </Text>
         </View>
       </View>
@@ -228,10 +228,10 @@ const ItemAdjustCard = React.memo(function ItemAdjustCard({ item, grams, accent,
 
       {/* Live macro pills — update on every slider tick */}
       <View style={styles.pillRow}>
-        <MacroPill label="Cal"  value={String(liveCal)} color={EMERALD_LEAF} />
-        <MacroPill label="Pro"  value={`${livePro}g`}   color={Colors.protein} />
-        <MacroPill label="Carb" value={`${liveCrb}g`}   color={Colors.carbs} />
-        <MacroPill label="Fat"  value={`${liveFat}g`}   color={Colors.fat} />
+        <MacroPill label="Cal"  value={String(liveCal)}    color={EMERALD_LEAF} />
+        <MacroPill label="Pro"  value={`${livePro}g`}       color={Colors.protein} />
+        <MacroPill label="Carb" value={`${liveCrb}g`}       color={Colors.carbs} />
+        <MacroPill label="Fat"  value={`${liveFat}g`}       color={Colors.fat} />
       </View>
     </View>
   );
@@ -365,7 +365,7 @@ export default function ReviewScreen() {
       <View style={styles.topBar}>
         <TouchableOpacity
           style={styles.backBtn}
-          onPress={() => router.back()}
+          onPress={() => router.replace("/camera")}
           activeOpacity={0.75}
         >
           <ArrowLeft size={20} color="#0F172A" strokeWidth={2} />
@@ -444,7 +444,7 @@ export default function ReviewScreen() {
         <TouchableOpacity
           style={styles.outlineBtn}
           activeOpacity={0.75}
-          onPress={() => router.back()}
+          onPress={() => router.replace("/camera")}
         >
           <RefreshCw size={15} color={ICE} strokeWidth={2} />
           <Text style={styles.outlineBtnText}>Retake Scan</Text>

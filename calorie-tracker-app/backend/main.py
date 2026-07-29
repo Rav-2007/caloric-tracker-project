@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 # Config
 # ---------------------------------------------------------------------------
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-MODEL_ID = "gemini-2.5-flash"
+MODEL_ID = "gemini-2.0-flash"
 # With thinking disabled (see GenerateContentConfig below) Gemini answers a
 # single-image extraction in ~2–5 s; 30 s is a generous ceiling that still
 # fails fast enough for a mobile client waiting on a spinner.
@@ -1038,6 +1038,13 @@ Rules:
 - Return only valid JSON with keys: insight, tip, action.
 """.strip()
 
+# In-memory cache for the insight response.
+# Keyed by calendar date string (YYYY-MM-DD) so we regenerate every new day.
+# Within the same day we reuse the cached result unless meal data changed
+# (detected via a lightweight hash of the meal summary text).
+_insight_cache: dict[str, tuple[str, NutritionInsightResponse]] = {}
+# hash_key -> (meals_hash, response)
+
 
 @app.get(
     "/api/v1/nutrition-insight",
@@ -1051,6 +1058,7 @@ async def nutrition_insight(
 ) -> NutritionInsightResponse:
     # 1. Fetch today's meals
     today = datetime.now(_APP_TZ).date()
+    today_str = str(today)
     try:
         stmt = (
             select(LoggedMeal)
@@ -1101,7 +1109,16 @@ async def nutrition_insight(
         f"Meals logged:\n{meals_text}"
     )
 
-    # 4. Call Gemini
+    # 4. Cache check — skip Gemini if meal data hasn't changed since last call today.
+    #    This prevents burning quota on every Progress screen open.
+    import hashlib as _hashlib
+    meals_hash = _hashlib.md5(user_context.encode()).hexdigest()
+    cached = _insight_cache.get(today_str)
+    if cached and cached[0] == meals_hash:
+        logger.info("Nutrition insight served from cache (meals unchanged)")
+        return cached[1]
+
+    # 5. Call Gemini
     try:
         response = await asyncio.wait_for(
             gemini_client.aio.models.generate_content(
@@ -1122,26 +1139,74 @@ async def nutrition_insight(
             detail="Gemini timed out generating insight.",
         )
     except Exception as exc:
+        exc_str = str(exc)
+        # Handle Gemini free-tier daily quota exhaustion gracefully.
+        # Return a computed insight from local data instead of a hard error
+        # so the card stays useful even when the API quota is spent.
+        if "429" in exc_str or "RESOURCE_EXHAUSTED" in exc_str:
+            logger.warning("Gemini quota exhausted — returning local fallback insight")
+            fallback = _local_insight(total_kcal, total_protein, calorie_target, protein_target, bool(rows))
+            # Cache the fallback so retries don't spam logs
+            _insight_cache[today_str] = (meals_hash, fallback)
+            return fallback
         logger.exception("Gemini error for nutrition insight: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Could not generate insight right now.",
         ) from exc
 
-    # 5. Parse response
+    # 6. Parse response
     try:
         raw = _json.loads(response.text)
-        return NutritionInsightResponse(
+        result = NutritionInsightResponse(
             insight=str(raw.get("insight", "")),
             tip=str(raw.get("tip", "")),
             action=str(raw.get("action", "View Details")),
         )
+        # Store in cache keyed by today + meals hash
+        _insight_cache[today_str] = (meals_hash, result)
+        return result
     except Exception as exc:
         logger.exception("Failed to parse Gemini insight response: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Unexpected response from AI service.",
         ) from exc
+
+
+def _local_insight(
+    total_kcal: float,
+    total_protein: float,
+    calorie_target: int,
+    protein_target: int,
+    has_meals: bool,
+) -> NutritionInsightResponse:
+    """Compute a simple rule-based insight when Gemini quota is exhausted."""
+    if not has_meals:
+        return NutritionInsightResponse(
+            insight="No meals logged yet today. Start by scanning your first meal!",
+            tip="Take a photo of your next meal to get started.",
+            action="Scan First Meal",
+        )
+    remaining = calorie_target - total_kcal
+    protein_gap = protein_target - total_protein
+    if remaining < 0:
+        return NutritionInsightResponse(
+            insight=f"You're {abs(int(remaining))} kcal over your {calorie_target} kcal target today. Keep dinner light.",
+            tip="Try a small salad or curd instead of a heavy dinner.",
+            action="Keep Dinner Light",
+        )
+    if protein_gap > 20:
+        return NutritionInsightResponse(
+            insight=f"You have {int(remaining)} kcal left and need {int(protein_gap)}g more protein to hit your target.",
+            tip="Add paneer, eggs or dal to your next meal for a protein boost.",
+            action="Add Protein Now",
+        )
+    return NutritionInsightResponse(
+        insight=f"Good progress! {int(total_kcal)} kcal logged with {int(remaining)} kcal remaining for the day.",
+        tip="Stay consistent and log every meal for the best results.",
+        action="Keep It Up",
+    )
 
 
 @app.post(

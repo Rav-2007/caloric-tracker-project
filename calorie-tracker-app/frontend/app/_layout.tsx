@@ -1,3 +1,4 @@
+import React from "react";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -11,13 +12,11 @@ const SCREEN_DEFAULT: React.ComponentProps<typeof Stack.Screen>["options"] = {
 export default function RootLayout() {
   return (
     <SafeAreaProvider>
-      {/* Dark icons over the light off-white backdrop.
-          Camera screen overrides to "light" via its own <StatusBar />. */}
       <StatusBar style="dark" translucent />
-
       <Stack screenOptions={SCREEN_DEFAULT}>
         <Stack.Screen name="index" />
-        <Stack.Screen name="camera" />
+        {/* camera → review form their own mini-stack so back from review goes to camera */}
+        <Stack.Screen name="camera" options={{ animation: "slide_from_bottom" }} />
         <Stack.Screen name="review" />
         <Stack.Screen name="progress" />
         <Stack.Screen name="diary" />

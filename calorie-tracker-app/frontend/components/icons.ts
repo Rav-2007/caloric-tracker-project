@@ -39,7 +39,17 @@ export { default as QrCode }          from "lucide-react-native/dist/esm/icons/q
 export { default as RefreshCw }       from "lucide-react-native/dist/esm/icons/refresh-cw";
 export { default as ShieldAlert }     from "lucide-react-native/dist/esm/icons/shield-alert";
 export { default as ShieldCheck }     from "lucide-react-native/dist/esm/icons/shield-check";
+export { default as SlidersHorizontal } from "lucide-react-native/dist/esm/icons/sliders-horizontal";
 export { default as Sparkles }        from "lucide-react-native/dist/esm/icons/sparkles";
+export { default as Settings }        from "lucide-react-native/dist/esm/icons/settings";
+export { default as Bell }            from "lucide-react-native/dist/esm/icons/bell";
+export { default as Palette }         from "lucide-react-native/dist/esm/icons/palette";
+export { default as Lock }            from "lucide-react-native/dist/esm/icons/lock";
+export { default as Globe }           from "lucide-react-native/dist/esm/icons/globe";
+export { default as Info }            from "lucide-react-native/dist/esm/icons/info";
+export { default as Headphones }      from "lucide-react-native/dist/esm/icons/headphones";
+export { default as LogOut }          from "lucide-react-native/dist/esm/icons/log-out";
+export { default as Shield }          from "lucide-react-native/dist/esm/icons/shield";
 export { default as Star }            from "lucide-react-native/dist/esm/icons/star";
 export { default as Sun }             from "lucide-react-native/dist/esm/icons/sun";
 export { default as Sunset }          from "lucide-react-native/dist/esm/icons/sunset";

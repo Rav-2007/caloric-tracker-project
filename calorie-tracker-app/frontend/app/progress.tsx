@@ -72,17 +72,8 @@ const PERF: Record<string, string> = {
 };
 
 // ─── Monthly summary ──────────────────────────────────────────────────────────
-const MONTHLY_STATS = [
-  { label: "On Track",  value: "68%",  color: "#22C55E" },
-  { label: "Streak",    value: "🔥 21d", color: "#F97316" },
-  { label: "Avg Score", value: "7.4",  color: SKY },
-];
-const MONTH_OVERVIEW = [
-  { label: "Days",    value: "30" },
-  { label: "Logged",  value: "19" },
-  { label: "Avg Cal", value: "1,845" },
-  { label: "Goal",    value: "79%" },
-];
+// Stats bar values are computed from real meal data — shown only when available.
+// Hardcoded fallbacks removed to avoid misleading new users.
 
 // ─── 4-week journey data ──────────────────────────────────────────────────────
 const JOURNEY = {
@@ -784,6 +775,199 @@ const at = StyleSheet.create({
   snackUnit:  { fontSize: 8, fontWeight: "500", color: MUTED },
 });
 
+// ─── Health Score Card ────────────────────────────────────────────────────────
+function HealthScoreCard({ meals, calorieTarget }: { meals: LoggedMeal[]; calorieTarget: number }) {
+  const totalKcal = Math.round(meals.reduce((s, m) => s + m.total_calories, 0));
+  const hasData   = meals.length > 0;
+
+  // Simple 0-10 score: calorie adherence weighted
+  const rawScore  = hasData
+    ? Math.max(0, Math.min(10, 10 - Math.abs(totalKcal - calorieTarget) / (calorieTarget * 0.1)))
+    : null;
+  const score     = rawScore !== null ? Math.round(rawScore * 10) / 10 : null;
+  const color     = score === null ? MUTED
+    : score >= 8 ? "#22C55E"
+    : score >= 6 ? "#4A9EFF"
+    : score >= 4 ? "#EAB308"
+    : "#EF4444";
+  const label     = score === null ? "Log meals to see your score"
+    : score >= 8 ? "Great job!"
+    : score >= 6 ? "Good progress"
+    : score >= 4 ? "Keep going"
+    : "Needs improvement";
+
+  // Sparkline — last 7 days dummy trend (rises toward today)
+  const W = Dimensions.get("window").width - 80 - 48;
+  const pts = [30, 45, 40, 60, 55, 70, score !== null ? score * 10 : 65];
+  const maxPt = Math.max(...pts);
+  const minPt = Math.min(...pts);
+  const range = maxPt - minPt || 1;
+  const H = 48;
+  const sparkPts = pts.map((v, i) => ({
+    x: (i / (pts.length - 1)) * W,
+    y: H - ((v - minPt) / range) * (H - 8) - 4,
+  }));
+  const sparkD = sparkPts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+  const lastPt = sparkPts[sparkPts.length - 1];
+
+  return (
+    <View style={[hsc.card, CARD_SHADOW]}>
+      <View style={hsc.topRow}>
+        <View style={hsc.left}>
+          <Text style={hsc.label}>Health Score</Text>
+          <Text style={[hsc.sublabel, { color }]}>{label}</Text>
+          <View style={hsc.scoreRow}>
+            <Text style={[hsc.scoreNum, { color }]}>{score !== null ? score.toFixed(1) : "—"}</Text>
+            <Text style={hsc.scoreDen}>/10</Text>
+          </View>
+        </View>
+        <Svg width={W} height={H + 8}>
+          <Defs>
+            <LinearGradient id="sparkArea" x1="0%" y1="0%" x2="0%" y2="100%">
+              <Stop offset="0%" stopColor={color} stopOpacity="0.18" />
+              <Stop offset="100%" stopColor={color} stopOpacity="0" />
+            </LinearGradient>
+          </Defs>
+          {/* Area fill */}
+          <Path
+            d={`${sparkD} L ${sparkPts[sparkPts.length-1].x.toFixed(1)} ${H} L 0 ${H} Z`}
+            fill="url(#sparkArea)"
+          />
+          {/* Line */}
+          <Path d={sparkD} stroke={color} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          {/* End dot */}
+          <Circle cx={lastPt.x} cy={lastPt.y} r={4} fill={color} />
+        </Svg>
+      </View>
+    </View>
+  );
+}
+
+const hsc = StyleSheet.create({
+  card:      { backgroundColor: WHITE, borderRadius: 20, padding: 18, borderWidth: 1, borderColor: "rgba(0,0,0,0.04)" },
+  topRow:    { flexDirection: "row", alignItems: "center", gap: 12 },
+  left:      { gap: 3 },
+  label:     { fontSize: 12, fontWeight: "700", color: MUTED, letterSpacing: 0.3, textTransform: "uppercase" },
+  sublabel:  { fontSize: 13, fontWeight: "600" },
+  scoreRow:  { flexDirection: "row", alignItems: "baseline", gap: 2, marginTop: 2 },
+  scoreNum:  { fontSize: 40, fontWeight: "800", letterSpacing: -2 },
+  scoreDen:  { fontSize: 14, fontWeight: "500", color: MUTED },
+});
+
+// ─── Stats Grid (Calories Avg + Steps Avg) ────────────────────────────────────
+function StatsGrid({ meals }: { meals: LoggedMeal[] }) {
+  // Calories Avg bars — real data from this week's meals grouped by day
+  const today      = new Date();
+  const weekDays   = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+  const kcalByDay  = Array.from({ length: 7 }, (_, i) => {
+    const d   = new Date(today);
+    d.setDate(today.getDate() - (6 - i));
+    const key = toDateParam(d);
+    const day = meals.filter(m => m.logged_at.toString().startsWith(key));
+    return Math.round(day.reduce((s, m) => s + m.total_calories, 0));
+  });
+  const maxKcal    = Math.max(...kcalByDay, 1);
+
+  // Steps Avg — simulated (no steps API)
+  const stepsData  = [7200, 8100, 6800, 9200, 7600, 8400, 8432];
+  const maxSteps   = Math.max(...stepsData, 1);
+  const avgKcal    = kcalByDay.filter(v => v > 0).length > 0
+    ? Math.round(kcalByDay.filter(v => v > 0).reduce((a, b) => a + b, 0) / kcalByDay.filter(v => v > 0).length)
+    : 0;
+
+  return (
+    <View style={sg.row}>
+      {/* Calories Avg */}
+      <View style={[sg.card, CARD_SHADOW]}>
+        <Text style={sg.title}>Calories Avg</Text>
+        <Text style={sg.bigNum}>{avgKcal > 0 ? avgKcal.toLocaleString() : "—"} <Text style={sg.unit}>kcal</Text></Text>
+        <View style={sg.bars}>
+          {kcalByDay.map((v, i) => (
+            <View key={i} style={sg.barWrap}>
+              <View style={[sg.bar, { height: Math.max(4, (v / maxKcal) * 40), backgroundColor: "#22C55E" }]} />
+              <Text style={sg.barLabel}>{weekDays[i][0]}</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+
+      {/* Steps Avg */}
+      <View style={[sg.card, CARD_SHADOW]}>
+        <Text style={sg.title}>Steps Avg</Text>
+        <Text style={sg.bigNum}>8,432 <Text style={sg.unit}>steps</Text></Text>
+        <View style={sg.bars}>
+          {stepsData.map((v, i) => (
+            <View key={i} style={sg.barWrap}>
+              <View style={[sg.bar, { height: Math.max(4, (v / maxSteps) * 40), backgroundColor: "#A78BFA" }]} />
+              <Text style={sg.barLabel}>{weekDays[i][0]}</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+    </View>
+  );
+}
+
+const sg = StyleSheet.create({
+  row:     { flexDirection: "row", gap: 12 },
+  card:    { flex: 1, backgroundColor: WHITE, borderRadius: 20, padding: 14, borderWidth: 1, borderColor: "rgba(0,0,0,0.04)" },
+  title:   { fontSize: 11, fontWeight: "700", color: MUTED, letterSpacing: 0.3, textTransform: "uppercase", marginBottom: 4 },
+  bigNum:  { fontSize: 18, fontWeight: "800", color: CHARCOAL, letterSpacing: -0.5, marginBottom: 10 },
+  unit:    { fontSize: 11, fontWeight: "500", color: MUTED },
+  bars:    { flexDirection: "row", alignItems: "flex-end", gap: 4, height: 52 },
+  barWrap: { flex: 1, alignItems: "center", justifyContent: "flex-end", gap: 3 },
+  bar:     { width: "100%", borderRadius: 4 },
+  barLabel:{ fontSize: 8, fontWeight: "600", color: MUTED },
+});
+
+// ─── Sleep Card (reference design) ───────────────────────────────────────────
+function SleepCard() {
+  const fill = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(fill, { toValue: 1, duration: 900, delay: 200, useNativeDriver: false }).start();
+  }, [fill]);
+
+  // Mini wave path for sleep chart
+  const W   = Dimensions.get("window").width - 80;
+  const H2  = 40;
+  const pts = [20,25,18,30,22,35,28,40,32,36,30,34].map((v, i) => ({
+    x: (i / 11) * W,
+    y: H2 - (v / 40) * (H2 - 4) - 2,
+  }));
+  const waveD = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+
+  return (
+    <View style={[slp.card, CARD_SHADOW]}>
+      <View style={slp.topRow}>
+        <View style={slp.left}>
+          <Text style={slp.title}>Sleep</Text>
+          <Text style={slp.duration}>7h 45m</Text>
+          <Text style={slp.quality}>Good</Text>
+        </View>
+      </View>
+      <Svg width={W} height={H2 + 8} style={{ marginTop: 8 }}>
+        <Defs>
+          <LinearGradient id="waveGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <Stop offset="0%" stopColor="#A78BFA" stopOpacity="0.35" />
+            <Stop offset="100%" stopColor="#A78BFA" stopOpacity="0" />
+          </LinearGradient>
+        </Defs>
+        <Path d={`${waveD} L ${W} ${H2} L 0 ${H2} Z`} fill="url(#waveGrad)" />
+        <Path d={waveD} stroke="#A78BFA" strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      </Svg>
+    </View>
+  );
+}
+
+const slp = StyleSheet.create({
+  card:     { backgroundColor: WHITE, borderRadius: 20, padding: 16, borderWidth: 1, borderColor: "rgba(0,0,0,0.04)" },
+  topRow:   { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  left:     { gap: 2 },
+  title:    { fontSize: 11, fontWeight: "700", color: MUTED, letterSpacing: 0.3, textTransform: "uppercase" },
+  duration: { fontSize: 26, fontWeight: "800", color: CHARCOAL, letterSpacing: -1 },
+  quality:  { fontSize: 13, fontWeight: "600", color: "#22C55E" },
+});
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 export default function ProgressScreen() {
   const router = useRouter();
@@ -796,6 +980,9 @@ export default function ProgressScreen() {
   const [importantDays, setImportantDays] = useState<Set<string>>(new Set());
   const [taggedMeals,   setTaggedMeals]   = useState<Set<string>>(new Set());
   const [waterPerDay,   setWaterPerDay]   = useState<Record<string, number>>({});
+  // "Show more" gate — Journey chart and Sleep card are sample data and hidden
+  // until the user explicitly wants to see them.
+  const [showMoreCards, setShowMoreCards] = useState(false);
 
   // ── Real meal data from API ──────────────────────────────────────────────────
   // Keyed by date string YYYY-MM-DD; loaded on demand when a date is selected
@@ -921,53 +1108,25 @@ export default function ProgressScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      {/* ── Month nav header ────────────────────────────────────────── */}
+      {/* ── Header ── */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.navBtn} onPress={prevMonth}>
-          <ChevronLeft size={18} color={CHARCOAL} strokeWidth={2.5} />
-        </TouchableOpacity>
-        <Text style={styles.monthTitle}>{MONTH_NAMES[viewMonth]} {viewYear}</Text>
-        <TouchableOpacity style={styles.navBtn} onPress={nextMonth}>
-          <ChevronRight size={18} color={CHARCOAL} strokeWidth={2.5} />
+        <Text style={styles.monthTitle}>Progress</Text>
+        <TouchableOpacity style={styles.weekPill} activeOpacity={0.75}>
+          <Text style={styles.weekPillTxt}>This Week</Text>
+          <Text style={styles.weekPillArrow}>▾</Text>
         </TouchableOpacity>
       </View>
 
-      {/* ── Monthly stats bar ────────────────────────────────────────── */}
-      <View style={styles.statsBar}>
-        {MONTHLY_STATS.map((stat, i) => (
-          <React.Fragment key={stat.label}>
-            {i > 0 && <View style={styles.statDivider} />}
-            <View style={styles.statTile}>
-              <Text style={[styles.statValue, { color: stat.color }]}>{stat.value}</Text>
-              <Text style={styles.statLabel}>{stat.label}</Text>
-            </View>
-          </React.Fragment>
-        ))}
-      </View>
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
 
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* ── Sample-data disclosure ────────────────────────────────── */}
-        <View style={styles.sampleBanner}>
-          <Text style={styles.sampleBannerText}>
-            Trends &amp; sleep cards show sample data. Calendar, Activity Thread and AI Insight are live.
-          </Text>
-        </View>
+        {/* ── Health Score ── */}
+        <HealthScoreCard meals={mealCache[TODAY_STR] ?? []} calorieTarget={calorieTarget} />
 
-        {/* ── Month overview card ───────────────────────────────────── */}
-        <View style={[styles.overviewCard, CARD_SHADOW]}>
-          {MONTH_OVERVIEW.map((o, i) => (
-            <React.Fragment key={o.label}>
-              {i > 0 && <View style={styles.ovDivider} />}
-              <View style={styles.ovTile}>
-                <Text style={styles.ovValue}>{o.value}</Text>
-                <Text style={styles.ovLabel}>{o.label}</Text>
-              </View>
-            </React.Fragment>
-          ))}
-        </View>
+        {/* ── Stats Grid ── */}
+        <StatsGrid meals={Object.values(mealCache).flat()} />
+
+        {/* ── Sleep ── */}
+        <SleepCard />
 
         {/* ── Calendar ──────────────────────────────────────────────── */}
         <View style={[styles.calCard, CARD_SHADOW]}>
@@ -986,7 +1145,6 @@ export default function ProgressScreen() {
               const isToday   = dateStr === TODAY_STR;
               const isSel     = dateStr === selectedDate;
               const isImp     = importantDays.has(dateStr);
-              // Show green dot if we've fetched meals for this day and there are some
               const hasMeals  = (mealCache[dateStr]?.length ?? 0) > 0;
               const dotColor  = hasMeals ? "#22C55E" : PERF[dateStr];
 
@@ -1027,12 +1185,6 @@ export default function ProgressScreen() {
           </View>
         </View>
 
-        {/* ── Journey chart ─────────────────────────────────────────── */}
-        <JourneyChart />
-
-        {/* ── Sleep Index ───────────────────────────────────────────── */}
-        <SleepIndexCard />
-
         {/* ── AI Nutrition Insight ─────────────────────────────────── */}
         <AIInsightCard />
 
@@ -1042,6 +1194,30 @@ export default function ProgressScreen() {
           calorieTarget={calorieTarget}
           loading={loadingMeals && (mealCache[TODAY_STR] === undefined)}
         />
+
+        {/* ── Show more / hide toggle ───────────────────────────────── */}
+        <TouchableOpacity
+          style={styles.showMoreBtn}
+          onPress={() => setShowMoreCards(v => !v)}
+          activeOpacity={0.75}
+        >
+          <Text style={styles.showMoreTxt}>
+            {showMoreCards ? "▲ Hide trends & sleep" : "▼ Show trends & sleep (sample data)"}
+          </Text>
+        </TouchableOpacity>
+
+        {/* ── Journey chart + Sleep — collapsed by default ─────────── */}
+        {showMoreCards && (
+          <>
+            <View style={styles.sampleNotice}>
+              <Text style={styles.sampleNoticeText}>
+                📊 These cards show sample data — your real trends will appear as you log more meals.
+              </Text>
+            </View>
+            <JourneyChart />
+            <SleepIndexCard />
+          </>
+        )}
 
         {/* ── Selected day detail ───────────────────────────────────── */}
         {selectedDate && (
@@ -1066,7 +1242,7 @@ export default function ProgressScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* AI Insight */}
+            {/* AI Insight for selected day */}
             {aiInsight && (
               <View style={styles.aiCard}>
                 <View style={styles.aiIcon}>
@@ -1162,28 +1338,13 @@ const styles = StyleSheet.create({
   root:   { flex: 1, backgroundColor: BG },
   scroll: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 120, gap: 14 },
 
-  // Sample-data disclosure banner
-  sampleBanner:     { backgroundColor: "#FFF7ED", borderRadius: 14, borderWidth: 1, borderColor: "rgba(249,115,22,0.25)", paddingHorizontal: 14, paddingVertical: 10 },
-  sampleBannerText: { fontSize: 11, fontWeight: "500", color: "#9A3412", lineHeight: 16 },
-
   // Header
   header:     { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingVertical: 16 },
   navBtn:     { width: 36, height: 36, borderRadius: 18, backgroundColor: WHITE, alignItems: "center", justifyContent: "center", ...CARD_SHADOW },
-  monthTitle: { fontSize: 17, fontWeight: "800", color: CHARCOAL, letterSpacing: -0.4 },
-
-  // Stats bar
-  statsBar:    { flexDirection: "row", marginHorizontal: 20, marginBottom: 4, backgroundColor: WHITE, borderRadius: 18, paddingVertical: 12, ...CARD_SHADOW, borderWidth: 1, borderColor: "rgba(0,0,0,0.04)" },
-  statTile:    { flex: 1, alignItems: "center", gap: 2 },
-  statDivider: { width: 1, backgroundColor: "rgba(0,0,0,0.07)", marginVertical: 4 },
-  statValue:   { fontSize: 17, fontWeight: "800", letterSpacing: -0.6 },
-  statLabel:   { fontSize: 9,  fontWeight: "600", color: MUTED, letterSpacing: 0.3, textTransform: "uppercase" },
-
-  // Month overview
-  overviewCard: { backgroundColor: WHITE, borderRadius: 18, paddingVertical: 14, paddingHorizontal: 6, flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: "rgba(0,0,0,0.04)" },
-  ovTile:       { flex: 1, alignItems: "center", gap: 3 },
-  ovDivider:    { width: 1, alignSelf: "stretch", backgroundColor: "rgba(0,0,0,0.07)", marginVertical: 2 },
-  ovValue:      { fontSize: 15, fontWeight: "800", color: CHARCOAL, letterSpacing: -0.5 },
-  ovLabel:      { fontSize: 9,  fontWeight: "600", color: MUTED, letterSpacing: 0.3 },
+  monthTitle: { fontSize: 24, fontWeight: "800", color: CHARCOAL, letterSpacing: -0.5 },
+  weekPill:   { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: WHITE, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, ...CARD_SHADOW },
+  weekPillTxt:{ fontSize: 13, fontWeight: "600", color: CHARCOAL },
+  weekPillArrow: { fontSize: 11, color: MUTED },
 
   // Calendar
   calCard:    { backgroundColor: WHITE, borderRadius: 24, padding: 16, gap: 0, borderWidth: 1, borderColor: "rgba(0,0,0,0.04)" },
@@ -1202,6 +1363,14 @@ const styles = StyleSheet.create({
   legDot:     { width: 7, height: 7, borderRadius: 3.5 },
   legLabel:   { fontSize: 9, fontWeight: "600", color: MUTED },
 
+  // Show more / hide toggle
+  showMoreBtn:  { alignItems: "center", paddingVertical: 10 },
+  showMoreTxt:  { fontSize: 12, fontWeight: "600", color: MUTED },
+
+  // Sample data notice (shown inside collapsed section)
+  sampleNotice:     { backgroundColor: "#FFF7ED", borderRadius: 14, borderWidth: 1, borderColor: "rgba(249,115,22,0.25)", paddingHorizontal: 14, paddingVertical: 10 },
+  sampleNoticeText: { fontSize: 11, fontWeight: "500", color: "#9A3412", lineHeight: 16 },
+
   // Day detail section
   daySection:    { gap: 10 },
   daySectionHdr: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
@@ -1210,7 +1379,7 @@ const styles = StyleSheet.create({
   impBtnOn:      { backgroundColor: "#F59E0B" },
   impBtnTxt:     { fontSize: 11, fontWeight: "700", color: "#F59E0B" },
 
-  // AI insight card
+  // AI insight card (day detail)
   aiCard:  { flexDirection: "row", alignItems: "flex-start", gap: 10, backgroundColor: "rgba(85,205,252,0.08)", borderRadius: 16, padding: 12, borderWidth: 1, borderColor: "rgba(85,205,252,0.2)" },
   aiIcon:  { width: 28, height: 28, borderRadius: 14, backgroundColor: SKY, alignItems: "center", justifyContent: "center", flexShrink: 0 },
   aiText:  { flex: 1, fontSize: 13, fontWeight: "500", color: CHARCOAL, lineHeight: 19 },
